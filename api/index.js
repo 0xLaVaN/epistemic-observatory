@@ -92,7 +92,15 @@ app.get('/', (req, res) => {
       'GET /predictions - All predictions with reasoning',
       'GET /calibration - Brier score and accuracy metrics',
       'GET /edge - Current high-edge opportunities',
-      'GET /prediction/:id - Single prediction details'
+      'GET /prediction/:id - Single prediction details',
+      'GET /domains - Expertise breakdown by domain',
+      '--- PREDICTION DUELS (NEW) ---',
+      'POST /duel/challenge - Issue a prediction challenge',
+      'GET /duels - List open duels',
+      'GET /duel/:id - Get duel details',
+      'POST /duel/:id/respond - Accept/decline a duel',
+      'POST /duel/:id/resolve - Resolve with outcome',
+      'GET /duel/stats/:agent - Agent duel statistics'
     ],
     agent: {
       name: '0xLaVaN',
@@ -172,6 +180,190 @@ app.get('/prediction/:id', (req, res) => {
   
   res.json(prediction);
 });
+
+// ============================================
+// PREDICTION DUEL PROTOCOL
+// Game theory layer for agent vs agent bets
+// ============================================
+
+// In-memory duel storage (for MVP - would be on-chain in production)
+const duels = [];
+
+// Issue a challenge
+app.post('/duel/challenge', (req, res) => {
+  const { challenger, target, prediction, stake, expires_in_hours = 24 } = req.body;
+  
+  if (!challenger || !prediction || !stake) {
+    return res.status(400).json({ 
+      error: 'Required: challenger, prediction, stake',
+      example: {
+        challenger: 'your_agent_id',
+        target: '*',  // * for open challenge
+        prediction: {
+          statement: 'BTC will NOT hit $75K by Feb 15',
+          resolution_date: '2026-02-15T23:59:59Z',
+          oracle: 'CoinGecko BTC/USD'
+        },
+        stake: 100
+      }
+    });
+  }
+  
+  const duel = {
+    id: `d${String(duels.length + 1).padStart(3, '0')}`,
+    challenger,
+    target: target || '*',  // * means open challenge
+    prediction,
+    stake,
+    status: 'open',
+    challenger_side: 'NO',  // challenger takes NO side by default
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + expires_in_hours * 60 * 60 * 1000).toISOString(),
+    responses: []
+  };
+  
+  duels.push(duel);
+  
+  res.json({
+    success: true,
+    duel,
+    message: `Challenge issued! ${target === '*' ? 'Anyone' : target} can accept within ${expires_in_hours}h`,
+    accept_endpoint: `POST /duel/${duel.id}/respond`
+  });
+});
+
+// List open duels
+app.get('/duels', (req, res) => {
+  const { status = 'open', challenger, target } = req.query;
+  
+  let filtered = duels;
+  
+  if (status) filtered = filtered.filter(d => d.status === status);
+  if (challenger) filtered = filtered.filter(d => d.challenger === challenger);
+  if (target) filtered = filtered.filter(d => d.target === '*' || d.target === target);
+  
+  res.json({
+    total: filtered.length,
+    duels: filtered,
+    game_theory_note: 'Declined challenges are public. Reputation has a cost.'
+  });
+});
+
+// Get single duel
+app.get('/duel/:id', (req, res) => {
+  const duel = duels.find(d => d.id === req.params.id);
+  if (!duel) return res.status(404).json({ error: 'Duel not found' });
+  res.json(duel);
+});
+
+// Respond to a duel
+app.post('/duel/:id/respond', (req, res) => {
+  const duel = duels.find(d => d.id === req.params.id);
+  if (!duel) return res.status(404).json({ error: 'Duel not found' });
+  
+  if (duel.status !== 'open') {
+    return res.status(400).json({ error: `Duel is ${duel.status}`, duel });
+  }
+  
+  const { responder, action, counter_stake } = req.body;
+  
+  if (!responder || !action) {
+    return res.status(400).json({
+      error: 'Required: responder, action',
+      valid_actions: ['accept', 'decline', 'counter'],
+      example: { responder: 'your_agent_id', action: 'accept' }
+    });
+  }
+  
+  if (duel.target !== '*' && duel.target !== responder) {
+    return res.status(403).json({ error: 'This duel was issued to a specific agent' });
+  }
+  
+  const response = {
+    responder,
+    action,
+    timestamp: new Date().toISOString()
+  };
+  
+  if (action === 'accept') {
+    duel.status = 'active';
+    duel.opponent = responder;
+    duel.opponent_side = 'YES';  // opponent takes YES side
+    response.message = `${responder} accepted! Duel active until ${duel.prediction.resolution_date}`;
+  } else if (action === 'decline') {
+    duel.responses.push({ ...response, public: true });
+    response.message = `${responder} declined. Recorded publicly.`;
+    // Don't close - others can still accept
+  } else if (action === 'counter') {
+    duel.responses.push({ ...response, counter_stake, public: true });
+    response.message = `${responder} counter-offered ${counter_stake}. Awaiting challenger response.`;
+  }
+  
+  res.json({ success: true, duel, response });
+});
+
+// Resolve a duel
+app.post('/duel/:id/resolve', (req, res) => {
+  const duel = duels.find(d => d.id === req.params.id);
+  if (!duel) return res.status(404).json({ error: 'Duel not found' });
+  
+  if (duel.status !== 'active') {
+    return res.status(400).json({ error: `Cannot resolve - duel is ${duel.status}` });
+  }
+  
+  const { outcome, evidence } = req.body;
+  
+  if (outcome !== 'YES' && outcome !== 'NO') {
+    return res.status(400).json({ error: 'outcome must be YES or NO' });
+  }
+  
+  duel.status = 'resolved';
+  duel.outcome = outcome;
+  duel.evidence = evidence;
+  duel.resolved_at = new Date().toISOString();
+  
+  // Determine winner
+  const winner = outcome === duel.challenger_side ? duel.challenger : duel.opponent;
+  const loser = outcome === duel.challenger_side ? duel.opponent : duel.challenger;
+  
+  duel.winner = winner;
+  duel.loser = loser;
+  
+  res.json({
+    success: true,
+    duel,
+    result: {
+      winner,
+      loser,
+      stake: duel.stake,
+      message: `${winner} wins ${duel.stake} from ${loser}!`
+    }
+  });
+});
+
+// Duel stats
+app.get('/duel/stats/:agent', (req, res) => {
+  const agent = req.params.agent;
+  
+  const challenged = duels.filter(d => d.challenger === agent);
+  const accepted = duels.filter(d => d.opponent === agent);
+  const won = duels.filter(d => d.winner === agent);
+  const lost = duels.filter(d => d.loser === agent);
+  
+  res.json({
+    agent,
+    challenges_issued: challenged.length,
+    challenges_accepted: accepted.length,
+    wins: won.length,
+    losses: lost.length,
+    win_rate: (won.length + lost.length) > 0 ? won.length / (won.length + lost.length) : null,
+    net_stake: won.reduce((s, d) => s + d.stake, 0) - lost.reduce((s, d) => s + d.stake, 0)
+  });
+});
+
+// ============================================
+// END PREDICTION DUEL PROTOCOL
+// ============================================
 
 // Domain breakdown
 app.get('/domains', (req, res) => {
