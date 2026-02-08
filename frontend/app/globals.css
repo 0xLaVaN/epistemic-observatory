@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+:root {
+  --void: #0a0a0f;
+  --cyber-cyan: #00f0ff;
+  --cyber-magenta: #ff00f0;
+  --cyber-amber: #f0a000;
+  --cyber-green: #00ff88;
+  --cyber-red: #ff3366;
+}
+
+body {
+  background: var(--void);
+  color: white;
+  font-family: 'JetBrains Mono', monospace;
+  overflow-x: hidden;
+}
+
+/* Grid background */
+.grid-bg {
+  background-image: 
+    linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+  background-position: center center;
+}
+
+/* Scanline effect */
+.scanlines::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.1),
+    rgba(0, 0, 0, 0.1) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* Glowing text */
+.glow-text {
+  text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor;
+}
+
+/* Agent orb */
+.agent-orb {
+  position: relative;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.2), transparent);
+  box-shadow: 
+    0 0 20px currentColor,
+    0 0 40px currentColor,
+    inset 0 0 20px rgba(255,255,255,0.1);
+  transition: all 0.3s ease;
+}
+
+.agent-orb:hover {
+  transform: scale(1.1);
+  box-shadow: 
+    0 0 30px currentColor,
+    0 0 60px currentColor,
+    inset 0 0 30px rgba(255,255,255,0.2);
+}
+
+/* Prediction stream */
+.prediction-stream {
+  font-size: 12px;
+  line-height: 1.8;
+  opacity: 0.7;
+}
+
+.prediction-stream .prediction {
+  animation: fadeSlide 10s linear forwards;
+}
+
+@keyframes fadeSlide {
+  0% { opacity: 1; transform: translateY(0); }
+  90% { opacity: 0.3; }
+  100% { opacity: 0; transform: translateY(-20px); }
+}
+
+/* Holographic card */
+.holo-card {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 240, 255, 0.1) 0%,
+    rgba(255, 0, 240, 0.05) 50%,
+    rgba(0, 240, 255, 0.1) 100%
+  );
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  backdrop-filter: blur(10px);
+}
+
+/* Calibration arc */
+.calibration-arc {
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+/* Resolution ripple */
+@keyframes ripple {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(3); opacity: 0; }
+}
+
+.resolution-ripple {
+  animation: ripple 1s ease-out forwards;
+}
