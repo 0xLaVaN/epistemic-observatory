@@ -23,9 +23,9 @@
     },
     {
       "id": "P003",
-      "claim": "At least one agent will reciprocate cross-trade within 48hrs of outreach",
+      "claim": "Cross-trade reciprocation",
       "confidence": 0.8,
-      "date": "Social",
+      "date": "✓",
       "resolved": false,
       "outcome": null
     },
@@ -219,9 +219,9 @@
     },
     {
       "id": "P026",
-      "claim": "ALL THREE Stuck at 50% markets resolve NO (GPT-6, Multimodal, Quantum)",
+      "claim": "ALL THREE resolve NO",
       "confidence": 0.85,
-      "date": "Meta",
+      "date": "✓",
       "resolved": true,
       "outcome": true,
       "resolution_note": "All three (P020, P021, P022) resolved NO as predicted. Correct."
@@ -291,14 +291,6 @@
       "outcome": null
     },
     {
-      "id": "P003",
-      "claim": "Cross-trade reciprocation",
-      "confidence": 0.8,
-      "date": "✓",
-      "resolved": false,
-      "outcome": null
-    },
-    {
       "id": "P020",
       "claim": "GPT-6 NOT announced Feb 6",
       "confidence": 0.99,
@@ -306,33 +298,6 @@
       "resolved": true,
       "outcome": true,
       "resolution_note": "GPT-6 was not announced on Feb 6. Prediction correct."
-    },
-    {
-      "id": "P021",
-      "claim": "Multimodal >GPT-5 NOT Feb 6",
-      "confidence": 0.95,
-      "date": "✓",
-      "resolved": true,
-      "outcome": true,
-      "resolution_note": "No multimodal model surpassing GPT-5 announced Feb 6."
-    },
-    {
-      "id": "P022",
-      "claim": "Quantum tweet NOT 50k RT Feb 6",
-      "confidence": 0.9,
-      "date": "✓",
-      "resolved": true,
-      "outcome": true,
-      "resolution_note": "No quantum tweet hit 50k retweets by Feb 6."
-    },
-    {
-      "id": "P026",
-      "claim": "ALL THREE resolve NO",
-      "confidence": 0.85,
-      "date": "✓",
-      "resolved": true,
-      "outcome": true,
-      "resolution_note": "All three (P020, P021, P022) resolved NO as predicted. Correct."
     },
     {
       "id": "P021",
@@ -463,6 +428,61 @@
       "date": "Meta",
       "resolved": false,
       "outcome": null
+    },
+    {
+      "id": "SB01",
+      "claim": "Seattle Seahawks win Super Bowl LX",
+      "confidence": 0.72,
+      "prediction": "YES",
+      "resolved": true,
+      "outcome": true,
+      "date": "Sports",
+      "resolution_date": "2026-02-09",
+      "reasoning": "Defense-driven thesis. Seattle pass rush + secondary vs Minnesota offense."
+    },
+    {
+      "id": "SB02",
+      "claim": "Shakira opens halftime with Tití Me Preguntó",
+      "confidence": 0.6,
+      "prediction": "YES",
+      "resolved": true,
+      "outcome": true,
+      "date": "Entertainment",
+      "resolution_date": "2026-02-09",
+      "reasoning": "Most streamed Latin track of decade. High probability opener."
+    },
+    {
+      "id": "SB03",
+      "claim": "Sam Darnold wins Super Bowl MVP",
+      "confidence": 0.48,
+      "prediction": "YES",
+      "resolved": true,
+      "outcome": false,
+      "date": "Sports",
+      "resolution_date": "2026-02-09",
+      "reasoning": "QB bias in MVP voting. But defense dominance could override."
+    },
+    {
+      "id": "SB04",
+      "claim": "Jaxon Smith-Njigba wins Super Bowl MVP",
+      "confidence": 0.22,
+      "prediction": "YES",
+      "resolved": true,
+      "outcome": false,
+      "date": "Sports",
+      "resolution_date": "2026-02-09",
+      "reasoning": "Long shot. Would need dominant receiving performance."
+    },
+    {
+      "id": "SB05",
+      "claim": "Super Bowl LX exceeds 130M viewers",
+      "confidence": 0.85,
+      "prediction": "YES",
+      "resolved": false,
+      "outcome": null,
+      "date": "Entertainment",
+      "resolution_date": "2026-02-15",
+      "reasoning": "Trend line + Shakira halftime + compelling matchup."
     }
   ],
   "calibration_summary": {
