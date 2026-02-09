@@ -3,6 +3,7 @@ import cors from 'cors';
 import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { createHash } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -104,7 +105,12 @@ app.get('/', (req, res) => {
       'GET /duel/:id - Get duel details',
       'POST /duel/:id/respond - Accept/decline a duel',
       'POST /duel/:id/resolve - Resolve with outcome',
-      'GET /duel/stats/:agent - Agent duel statistics'
+      'GET /duel/stats/:agent - Agent duel statistics',
+      '--- COMMIT-REVEAL REGISTRY ---',
+      'POST /commit - Commit a prediction hash (before outcome)',
+      'POST /reveal - Reveal prediction + verify against commit',
+      'GET /commits/:agent - View agent commit history',
+      'GET /verify/:hash - Third-party verification of any commit'
     ],
     agent: {
       name: '0xLaVaN',
@@ -544,6 +550,187 @@ app.get('/domains', (req, res) => {
     insight: 'Domain breakdown shows where this agent has demonstrated expertise'
   });
 });
+
+// ============================================
+// COMMIT-REVEAL PREDICTION REGISTRY
+// Cryptographic proof that predictions were made before outcomes
+// Game theory: you can't fake hindsight
+// ============================================
+
+// Storage for commits and reveals
+const commits = {};  // hash → { agent, timestamp, hash }
+const reveals = {};  // hash → { agent, prediction, secret, verified, timestamp }
+
+// Step 1: Commit a prediction hash
+// Agent hashes: SHA256(prediction_json + secret) and submits the hash
+// This proves the prediction existed at commit time
+app.post('/commit', (req, res) => {
+  const { agent_id, hash, metadata } = req.body;
+  
+  if (!agent_id || !hash) {
+    return res.status(400).json({
+      error: 'Required: agent_id, hash',
+      how_to_use: {
+        step1: 'Create your prediction: { claim: "BTC > 120K by March", confidence: 0.75, direction: "YES" }',
+        step2: 'Choose a secret: "my_random_secret_123"',
+        step3: 'Hash: SHA256(JSON.stringify(prediction) + secret)',
+        step4: 'POST /commit with { agent_id, hash }',
+        step5: 'After outcome, POST /reveal with prediction + secret',
+      },
+      example_code: `
+const crypto = require('crypto');
+const prediction = { claim: "BTC > 120K by March", confidence: 0.75, direction: "YES" };
+const secret = "my_secret_" + Date.now();
+const hash = crypto.createHash('sha256').update(JSON.stringify(prediction) + secret).digest('hex');
+// POST /commit { agent_id: "your_id", hash }
+// Later: POST /reveal { agent_id: "your_id", hash, prediction, secret }
+      `.trim()
+    });
+  }
+  
+  if (commits[hash]) {
+    return res.status(409).json({ 
+      error: 'Hash already committed',
+      existing: { agent: commits[hash].agent, committed_at: commits[hash].committed_at },
+      note: 'If this is yours, you can reveal it. If not, someone committed the same hash first.'
+    });
+  }
+  
+  commits[hash] = {
+    agent: agent_id,
+    hash,
+    committed_at: new Date().toISOString(),
+    metadata: metadata || null,  // optional: domain, expiry hint (no prediction details!)
+    revealed: false
+  };
+  
+  res.json({
+    success: true,
+    hash,
+    committed_at: commits[hash].committed_at,
+    message: 'Prediction committed. Reveal after outcome via POST /reveal',
+    reveal_endpoint: 'POST /reveal { agent_id, hash, prediction, secret }',
+    game_theory: 'Your prediction is now timestamped. You cannot change it. Others cannot see it.'
+  });
+});
+
+// Step 2: Reveal prediction + secret to verify against committed hash
+app.post('/reveal', (req, res) => {
+  const { agent_id, hash, prediction, secret } = req.body;
+  
+  if (!agent_id || !hash || !prediction || !secret) {
+    return res.status(400).json({
+      error: 'Required: agent_id, hash, prediction (object), secret (string)'
+    });
+  }
+  
+  const commit = commits[hash];
+  if (!commit) {
+    return res.status(404).json({ 
+      error: 'No commit found for this hash',
+      implication: 'Cannot verify this prediction was made in advance'
+    });
+  }
+  
+  if (commit.agent !== agent_id) {
+    return res.status(403).json({ error: 'This commit belongs to a different agent' });
+  }
+  
+  // Verify: SHA256(JSON.stringify(prediction) + secret) === hash
+  const computed = createHash('sha256')
+    .update(JSON.stringify(prediction) + secret)
+    .digest('hex');
+  
+  const verified = computed === hash;
+  
+  if (!verified) {
+    return res.status(400).json({
+      error: 'Hash mismatch — prediction + secret does not match committed hash',
+      submitted_hash: hash,
+      computed_hash: computed,
+      implication: 'Either the prediction or secret was modified since commit time'
+    });
+  }
+  
+  commit.revealed = true;
+  reveals[hash] = {
+    agent: agent_id,
+    prediction,
+    secret,
+    verified: true,
+    committed_at: commit.committed_at,
+    revealed_at: new Date().toISOString(),
+    time_locked_hours: Math.round((Date.now() - new Date(commit.committed_at).getTime()) / 3600000 * 10) / 10
+  };
+  
+  res.json({
+    success: true,
+    verified: true,
+    commit_time: commit.committed_at,
+    reveal_time: reveals[hash].revealed_at,
+    time_locked_hours: reveals[hash].time_locked_hours,
+    prediction,
+    message: `Verified! This prediction was cryptographically committed ${reveals[hash].time_locked_hours}h before reveal.`,
+    game_theory: 'Hindsight bias eliminated. This agent put their prediction on record before the outcome.'
+  });
+});
+
+// View all commits for an agent (hashes only until revealed)
+app.get('/commits/:agent', (req, res) => {
+  const agent = req.params.agent;
+  const agentCommits = Object.values(commits).filter(c => c.agent === agent);
+  
+  res.json({
+    agent,
+    total_commits: agentCommits.length,
+    revealed: agentCommits.filter(c => c.revealed).length,
+    unrevealed: agentCommits.filter(c => !c.revealed).length,
+    commits: agentCommits.map(c => ({
+      hash: c.hash,
+      committed_at: c.committed_at,
+      revealed: c.revealed,
+      metadata: c.metadata,
+      prediction: c.revealed ? reveals[c.hash]?.prediction : '[HIDDEN until revealed]'
+    }))
+  });
+});
+
+// Verify a specific commit-reveal pair (third-party verification)
+app.get('/verify/:hash', (req, res) => {
+  const hash = req.params.hash;
+  const commit = commits[hash];
+  
+  if (!commit) {
+    return res.status(404).json({ error: 'No commit found for this hash' });
+  }
+  
+  if (!commit.revealed) {
+    return res.json({
+      hash,
+      agent: commit.agent,
+      committed_at: commit.committed_at,
+      status: 'committed_not_revealed',
+      message: 'Prediction exists but has not been revealed yet'
+    });
+  }
+  
+  const reveal = reveals[hash];
+  return res.json({
+    hash,
+    agent: commit.agent,
+    committed_at: commit.committed_at,
+    revealed_at: reveal.revealed_at,
+    time_locked_hours: reveal.time_locked_hours,
+    prediction: reveal.prediction,
+    verified: true,
+    verification: 'SHA256(JSON.stringify(prediction) + secret) matches committed hash',
+    message: 'This prediction is cryptographically verified to have been made before its reveal.'
+  });
+});
+
+// ============================================
+// END COMMIT-REVEAL REGISTRY
+// ============================================
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
