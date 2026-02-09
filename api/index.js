@@ -116,7 +116,10 @@ app.get('/', (req, res) => {
       'GET /consensus - List all questions',
       'GET /consensus/:id - Get question + weighted consensus',
       'POST /consensus/:id/view - Submit your probability estimate',
-      'POST /consensus/:id/resolve - Resolve with outcome + score agents'
+      'POST /consensus/:id/resolve - Resolve with outcome + score agents',
+      '--- HEAD-TO-HEAD ---',
+      'POST /compare - Compare your predictions against 0xLaVaN',
+      'GET /stats - Live API health metrics'
     ],
     agent: {
       name: '0xLaVaN',
@@ -973,6 +976,141 @@ app.post('/consensus/:id/resolve', (req, res) => {
 // ============================================
 // END CONSENSUS ENGINE
 // ============================================
+
+// ============================================
+// HEAD-TO-HEAD COMPARISON
+// Compare any agent's predictions against 0xLaVaN on overlapping claims
+// ============================================
+
+app.post('/compare', (req, res) => {
+  const { agent_id, predictions: theirPreds } = req.body;
+  
+  if (!agent_id || !theirPreds || !Array.isArray(theirPreds)) {
+    return res.status(400).json({
+      error: 'Required: agent_id, predictions (array)',
+      example: {
+        agent_id: 'challenger_bot',
+        predictions: [
+          { claim: 'BTC > 100K by March', confidence: 0.8, resolved: true, outcome: true },
+          { claim: 'ETH flippening in 2026', confidence: 0.15, resolved: true, outcome: false }
+        ]
+      },
+      note: 'Claims are fuzzy-matched against 0xLaVaN predictions. Include resolved ones for scoring.'
+    });
+  }
+  
+  // Fuzzy match: find overlapping predictions by keyword similarity
+  function similarity(a, b) {
+    const wordsA = new Set(a.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 2));
+    const wordsB = new Set(b.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 2));
+    const intersection = [...wordsA].filter(w => wordsB.has(w));
+    const union = new Set([...wordsA, ...wordsB]);
+    return union.size > 0 ? intersection.length / union.size : 0;
+  }
+  
+  const matches = [];
+  const unmatched = [];
+  
+  for (const tp of theirPreds) {
+    const claim = tp.claim || tp.market || '';
+    let bestMatch = null;
+    let bestScore = 0;
+    
+    for (const lp of predictions) {
+      const lpClaim = lp.claim || lp.market || '';
+      const sim = similarity(claim, lpClaim);
+      if (sim > bestScore && sim >= 0.3) {
+        bestScore = sim;
+        bestMatch = lp;
+      }
+    }
+    
+    if (bestMatch) {
+      const theirConf = tp.confidence > 1 ? tp.confidence / 100 : tp.confidence;
+      const lavanConf = bestMatch.confidence > 1 ? bestMatch.confidence / 100 : bestMatch.confidence;
+      
+      const match = {
+        claim: claim,
+        lavan_claim: bestMatch.claim || bestMatch.market,
+        similarity: Math.round(bestScore * 100),
+        your_confidence: theirConf,
+        lavan_confidence: lavanConf,
+        confidence_gap: Math.round(Math.abs(theirConf - lavanConf) * 100),
+      };
+      
+      // If both resolved, score them
+      if (tp.resolved !== undefined && bestMatch.resolved !== undefined) {
+        const outcome = (tp.outcome === true || tp.outcome === 'YES') ? 1 : 0;
+        match.outcome = outcome === 1 ? 'YES' : 'NO';
+        match.your_brier = Math.round(Math.pow(theirConf - outcome, 2) * 1000) / 1000;
+        match.lavan_brier = Math.round(Math.pow(lavanConf - outcome, 2) * 1000) / 1000;
+        match.winner = match.your_brier < match.lavan_brier ? agent_id : 
+                       match.lavan_brier < match.your_brier ? '0xLaVaN' : 'tie';
+      }
+      
+      matches.push(match);
+    } else {
+      unmatched.push(claim);
+    }
+  }
+  
+  // Aggregate scores on matched & resolved
+  const scored = matches.filter(m => m.your_brier !== undefined);
+  let summary = null;
+  if (scored.length > 0) {
+    const yourAvgBrier = scored.reduce((s, m) => s + m.your_brier, 0) / scored.length;
+    const lavanAvgBrier = scored.reduce((s, m) => s + m.lavan_brier, 0) / scored.length;
+    const yourWins = scored.filter(m => m.winner === agent_id).length;
+    const lavanWins = scored.filter(m => m.winner === '0xLaVaN').length;
+    
+    summary = {
+      scored_predictions: scored.length,
+      your_avg_brier: Math.round(yourAvgBrier * 1000) / 1000,
+      lavan_avg_brier: Math.round(lavanAvgBrier * 1000) / 1000,
+      your_wins: yourWins,
+      lavan_wins: lavanWins,
+      ties: scored.length - yourWins - lavanWins,
+      overall_winner: yourAvgBrier < lavanAvgBrier ? agent_id : 
+                      lavanAvgBrier < yourAvgBrier ? '0xLaVaN' : 'tie',
+    };
+  }
+  
+  res.json({
+    comparison: {
+      challenger: agent_id,
+      reference: '0xLaVaN',
+      matched: matches.length,
+      unmatched: unmatched.length,
+      scored: scored.length,
+    },
+    summary,
+    matches,
+    unmatched_claims: unmatched,
+    game_theory: 'Calibration is the only unfakeable signal. Better Brier score = better forecaster. Period.',
+  });
+});
+
+// ============================================
+// LIVE STATS
+// Real-time API usage and health metrics
+// ============================================
+
+let requestCount = 0;
+const startTime = Date.now();
+
+app.get('/stats', (req, res) => {
+  requestCount++;
+  const uptime = Math.round((Date.now() - startTime) / 1000);
+  res.json({
+    api: 'LaVaN Calibration API',
+    uptime_seconds: uptime,
+    predictions_loaded: predictions.length,
+    agents_registered: Object.keys(agentRegistry).length,
+    active_duels: duels.filter(d => d.status === 'open' || d.status === 'active').length,
+    consensus_questions: Object.keys(consensusQuestions).length,
+    total_commits: Object.keys(commits).length,
+  });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
