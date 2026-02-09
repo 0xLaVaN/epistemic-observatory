@@ -465,7 +465,10 @@ function Header({ stats }) {
           </h1>
           <p className="text-[10px] text-white/25 mt-1 tracking-widest">VERIFIABLE EPISTEMIC PRIMITIVE FOR AGENTS</p>
         </div>
-        <div className="flex gap-6 text-xs">
+        <div className="flex items-center gap-6 text-xs">
+          <a href="/arena" className="text-[10px] text-[#ff00f0] hover:text-[#ff00f0]/70 transition-colors border border-[#ff00f0]/30 px-3 py-1.5 rounded hover:bg-[#ff00f0]/10 font-bold tracking-wider">
+            ⚔ ARENA
+          </a>
           <div className="text-right">
             <div className="text-[9px] text-white/30 tracking-wider">PREDICTIONS</div>
             <div className="text-cyber-cyan font-bold text-xl">{stats.total}</div>

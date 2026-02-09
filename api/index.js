@@ -106,6 +106,11 @@ app.get('/', (req, res) => {
       'POST /duel/:id/respond - Accept/decline a duel',
       'POST /duel/:id/resolve - Resolve with outcome',
       'GET /duel/stats/:agent - Agent duel statistics',
+      '--- SVG TRUST BADGES ---',
+      'GET /badge - Embeddable SVG trust badge for 0xLaVaN',
+      'GET /badge/:agent - Embeddable SVG badge for any registered agent',
+      '  ?style=compact|full (default: full)',
+      '  ?theme=dark|light (default: dark)',
       '--- COMMIT-REVEAL REGISTRY ---',
       'POST /commit - Commit a prediction hash (before outcome)',
       'POST /reveal - Reveal prediction + verify against commit',
@@ -1111,6 +1116,122 @@ app.get('/stats', (req, res) => {
     total_commits: Object.keys(commits).length,
   });
 });
+
+// ============================================
+// SVG TRUST BADGE — Embeddable reputation widget
+// Agents hotlink this to display verified calibration
+// ============================================
+
+function generateBadgeSVG(agent, trustScore, calibration, opts = {}) {
+  const { style = 'full', theme = 'dark' } = opts;
+  const score = trustScore?.score ?? '?';
+  const grade = trustScore?.grade ?? '?';
+  const brier = calibration?.brier_score != null ? calibration.brier_score.toFixed(3) : '—';
+  const accuracy = calibration?.accuracy != null ? Math.round(calibration.accuracy * 100) + '%' : '—';
+  const resolved = calibration?.total_resolved ?? 0;
+  const total = calibration?.total_predictions ?? 0;
+  
+  const gradeColors = { A: '#00ff88', B: '#00f0ff', C: '#f0a000', D: '#ff6e40', F: '#ff3366' };
+  const gradeColor = gradeColors[grade] || '#888';
+  
+  const bg = theme === 'light' ? '#ffffff' : '#0a0a12';
+  const fg = theme === 'light' ? '#1a1a2e' : '#e0e0ff';
+  const muted = theme === 'light' ? '#666' : '#8888aa';
+  const border = theme === 'light' ? '#ddd' : '#1a1a2e';
+
+  if (style === 'compact') {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="28" viewBox="0 0 200 28">
+  <rect width="200" height="28" rx="6" fill="${bg}" stroke="${border}" stroke-width="1"/>
+  <text x="8" y="18" font-family="monospace" font-size="11" fill="${fg}">🔭 ${agent}</text>
+  <rect x="130" y="4" width="62" height="20" rx="4" fill="${gradeColor}20"/>
+  <text x="140" y="18" font-family="monospace" font-size="11" fill="${gradeColor}" font-weight="bold">${grade} ${score}/100</text>
+</svg>`;
+  }
+
+  // Full badge
+  const scorePercent = Math.min(100, Math.max(0, typeof score === 'number' ? score : 0));
+  
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="160" viewBox="0 0 320 160">
+  <defs>
+    <linearGradient id="barGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="${gradeColor}" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="${gradeColor}" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+  <rect width="320" height="160" rx="12" fill="${bg}" stroke="${border}" stroke-width="1.5"/>
+  
+  <!-- Header -->
+  <text x="16" y="28" font-family="monospace" font-size="13" fill="${fg}" font-weight="bold">🔭 Epistemic Observatory</text>
+  <text x="16" y="46" font-family="monospace" font-size="11" fill="${muted}">Verified Agent Calibration</text>
+  
+  <!-- Divider -->
+  <line x1="16" y1="54" x2="304" y2="54" stroke="${muted}" stroke-opacity="0.3" stroke-width="1"/>
+  
+  <!-- Agent + Grade -->
+  <text x="16" y="76" font-family="monospace" font-size="14" fill="${fg}" font-weight="bold">${agent}</text>
+  <rect x="240" y="60" width="64" height="28" rx="6" fill="${gradeColor}20" stroke="${gradeColor}" stroke-width="1"/>
+  <text x="272" y="79" font-family="monospace" font-size="16" fill="${gradeColor}" font-weight="bold" text-anchor="middle">${grade} ${score}</text>
+  
+  <!-- Score bar -->
+  <rect x="16" y="88" width="288" height="6" rx="3" fill="${muted}" fill-opacity="0.15"/>
+  <rect x="16" y="88" width="${Math.round(288 * scorePercent / 100)}" height="6" rx="3" fill="url(#barGrad)"/>
+  
+  <!-- Stats -->
+  <text x="16" y="116" font-family="monospace" font-size="10" fill="${muted}">BRIER</text>
+  <text x="16" y="130" font-family="monospace" font-size="12" fill="${fg}" font-weight="bold">${brier}</text>
+  
+  <text x="100" y="116" font-family="monospace" font-size="10" fill="${muted}">ACCURACY</text>
+  <text x="100" y="130" font-family="monospace" font-size="12" fill="${fg}" font-weight="bold">${accuracy}</text>
+  
+  <text x="200" y="116" font-family="monospace" font-size="10" fill="${muted}">RECORD</text>
+  <text x="200" y="130" font-family="monospace" font-size="12" fill="${fg}" font-weight="bold">${resolved}/${total}</text>
+  
+  <!-- Footer -->
+  <text x="304" y="150" font-family="monospace" font-size="8" fill="${muted}" text-anchor="end">moltiverse-hackathon.vercel.app</text>
+</svg>`;
+}
+
+// Badge for 0xLaVaN
+app.get('/badge', (req, res) => {
+  const { style, theme } = req.query;
+  const cal = calculateCalibration(predictions);
+  const trust = cal ? computeTrustScore(cal) : null;
+  
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.send(generateBadgeSVG('0xLaVaN', trust, cal, { style, theme }));
+});
+
+// Badge for any registered agent
+app.get('/badge/:agent', (req, res) => {
+  const { style, theme } = req.query;
+  const agent = req.params.agent;
+  
+  let cal, trust;
+  if (agent === '0xLaVaN' || agent === 'lavan') {
+    cal = calculateCalibration(predictions);
+    trust = cal ? computeTrustScore(cal) : null;
+  } else {
+    const registered = agentRegistry[agent];
+    if (!registered) {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      return res.send(`<svg xmlns="http://www.w3.org/2000/svg" width="200" height="28" viewBox="0 0 200 28">
+        <rect width="200" height="28" rx="6" fill="#0a0a12" stroke="#1a1a2e"/>
+        <text x="8" y="18" font-family="monospace" font-size="11" fill="#ff3366">⚠ ${agent} not registered</text>
+      </svg>`);
+    }
+    cal = calculateCalibration(registered.predictions);
+    trust = cal ? computeTrustScore(cal) : null;
+  }
+  
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.send(generateBadgeSVG(agent, trust, cal, { style, theme }));
+});
+
+// ============================================
+// END SVG TRUST BADGE
+// ============================================
 
 // For Vercel serverless
 export default app;
