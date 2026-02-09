@@ -294,6 +294,165 @@ function DuelPanel({ duels }) {
   );
 }
 
+function ApiHealthPanel({ health }) {
+  const statusColor = health.status === 'online' ? '#00ff88' : health.status === 'degraded' ? '#f0a000' : '#ff3366';
+  const statusLabel = health.status?.toUpperCase() || 'CHECKING';
+
+  return (
+    <div className="holo-card p-5 rounded-lg">
+      <h3 className="text-[10px] text-white/40 font-bold tracking-widest mb-4 flex items-center gap-2">
+        <svg width="8" height="8" viewBox="0 0 8 8">
+          <circle cx="4" cy="4" r="3" fill={statusColor}>
+            <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite" />
+          </circle>
+        </svg>
+        API STATUS
+      </h3>
+      <div className="space-y-3">
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] text-white/50">Status</span>
+          <span className="text-xs font-bold" style={{ color: statusColor }}>{statusLabel}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] text-white/50">Latency</span>
+          <span className="text-xs font-mono text-white/70">{health.latency ? `${health.latency}ms` : '—'}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] text-white/50">Endpoints</span>
+          <span className="text-xs font-mono text-white/70">{health.endpoints || '—'}</span>
+        </div>
+        <div className="flex justify-between items-center">
+          <span className="text-[10px] text-white/50">Version</span>
+          <span className="text-xs font-mono text-white/70">{health.version || '0.1.0'}</span>
+        </div>
+        {health.lastCheck && (
+          <div className="text-[9px] text-white/20 text-right">
+            Last check: {new Date(health.lastCheck).toLocaleTimeString()}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LiveFeed({ events }) {
+  return (
+    <div className="holo-card p-5 rounded-lg">
+      <h3 className="text-[10px] text-white/40 font-bold tracking-widest mb-4 flex items-center gap-2">
+        <span className="inline-block w-2 h-2 bg-cyber-cyan rounded-full animate-pulse" />
+        LIVE FEED
+      </h3>
+      {events.length === 0 ? (
+        <p className="text-[10px] text-white/30">Listening for activity...</p>
+      ) : (
+        <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-thin">
+          {events.map((e, i) => (
+            <motion.div
+              key={e.id || i}
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-start gap-2"
+            >
+              <span className="text-[9px] font-mono text-white/20 flex-shrink-0 mt-0.5">
+                {new Date(e.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </span>
+              <div className="flex-1 min-w-0">
+                <span className={`text-[9px] font-bold px-1 rounded ${
+                  e.type === 'prediction' ? 'text-cyber-cyan bg-cyber-cyan/10' :
+                  e.type === 'calibration' ? 'text-cyber-green bg-cyber-green/10' :
+                  e.type === 'commit' ? 'text-cyber-magenta bg-cyber-magenta/10' :
+                  e.type === 'consensus' ? 'text-cyber-amber bg-cyber-amber/10' :
+                  'text-white/40 bg-white/5'
+                }`}>{e.type?.toUpperCase()}</span>
+                <p className="text-[10px] text-white/50 mt-0.5 truncate">{e.message}</p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RegisterPanel() {
+  const [agentId, setAgentId] = useState('');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const handleLookup = async () => {
+    if (!agentId.trim()) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/trust-score/${encodeURIComponent(agentId.trim())}`);
+      const data = await res.json();
+      setResult(data);
+    } catch (e) {
+      setResult({ error: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="holo-card p-5 rounded-lg">
+      <h3 className="text-[10px] text-white/40 font-bold tracking-widest mb-4">AGENT LOOKUP</h3>
+      <div className="flex gap-2 mb-3">
+        <input
+          type="text"
+          value={agentId}
+          onChange={e => setAgentId(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleLookup()}
+          placeholder="agent_id"
+          className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1.5 text-[11px] text-white/70 font-mono placeholder:text-white/20 focus:outline-none focus:border-cyber-cyan/40"
+        />
+        <button
+          onClick={handleLookup}
+          disabled={loading}
+          className="px-3 py-1.5 bg-cyber-cyan/10 border border-cyber-cyan/30 rounded text-[10px] text-cyber-cyan font-bold hover:bg-cyber-cyan/20 transition-colors disabled:opacity-40"
+        >
+          {loading ? '...' : 'LOOKUP'}
+        </button>
+      </div>
+      {result && (
+        <div className="bg-white/5 rounded p-3 text-[10px]">
+          {result.error ? (
+            <span className="text-cyber-red">{result.error}</span>
+          ) : result.trust_score ? (
+            <div className="space-y-1">
+              <div className="flex justify-between">
+                <span className="text-white/40">Agent</span>
+                <span className="text-white/70 font-mono">{result.agent}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/40">Trust Score</span>
+                <span className="font-bold" style={{
+                  color: result.trust_score.grade === 'A' ? '#00ff88' :
+                         result.trust_score.grade === 'B' ? '#00f0ff' :
+                         result.trust_score.grade === 'C' ? '#f0a000' : '#ff3366'
+                }}>{result.trust_score.score}/100 ({result.trust_score.grade})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/40">Brier</span>
+                <span className="text-white/70">{result.calibration?.brier_score?.toFixed(3) || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/40">Resolved</span>
+                <span className="text-white/70">{result.calibration?.total_resolved || 0}</span>
+              </div>
+            </div>
+          ) : (
+            <span className="text-white/40">{result.message || 'Agent not found. Register via POST /register'}</span>
+          )}
+        </div>
+      )}
+      <p className="text-[9px] text-white/20 mt-3">
+        Register predictions: POST /register · Docs at /
+      </p>
+    </div>
+  );
+}
+
 function Header({ stats }) {
   return (
     <header className="fixed top-0 left-0 right-0 z-50 p-6 bg-gradient-to-b from-[#0a0a0f] via-[#0a0a0fdd] to-transparent">
@@ -330,37 +489,65 @@ export default function Observatory() {
   const [calibration, setCalibration] = useState(null);
   const [edges, setEdges] = useState([]);
   const [duels, setDuels] = useState([]);
+  const [health, setHealth] = useState({ status: 'checking' });
+  const [feedEvents, setFeedEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
 
   useEffect(() => {
     async function fetchData() {
+      const t0 = Date.now();
       try {
-        const [predRes, calRes, edgeRes, duelRes] = await Promise.all([
+        const [predRes, calRes, edgeRes, duelRes, consensusRes] = await Promise.all([
           fetch(`${API_BASE}/predictions?limit=200`),
           fetch(`${API_BASE}/calibration`),
           fetch(`${API_BASE}/edge`),
           fetch(`${API_BASE}/duels`).catch(() => ({ ok: false })),
+          fetch(`${API_BASE}/consensus`).catch(() => ({ ok: false })),
         ]);
+
+        const latency = Date.now() - t0;
+        setHealth({ status: 'online', latency, endpoints: 16, version: '0.1.0', lastCheck: new Date().toISOString() });
+
+        const newEvents = [];
 
         if (predRes.ok) {
           const data = await predRes.json();
           setPredictions(data.predictions || []);
+          if (data.total) {
+            newEvents.push({ type: 'prediction', message: `${data.total} predictions tracked`, time: new Date().toISOString() });
+          }
         }
         if (calRes.ok) {
-          setCalibration(await calRes.json());
+          const calData = await calRes.json();
+          setCalibration(calData);
+          if (calData.brier_score != null) {
+            newEvents.push({ type: 'calibration', message: `Brier ${calData.brier_score.toFixed(3)} · ${calData.total_resolved} resolved`, time: new Date().toISOString() });
+          }
         }
         if (edgeRes.ok) {
           const data = await edgeRes.json();
           setEdges(data.opportunities || []);
+          if (data.opportunities?.length) {
+            newEvents.push({ type: 'edge', message: `${data.opportunities.length} high-edge positions`, time: new Date().toISOString() });
+          }
         }
         if (duelRes.ok) {
           const data = await duelRes.json();
           setDuels(data.duels || []);
         }
+        if (consensusRes.ok) {
+          const data = await consensusRes.json();
+          if (data.total > 0) {
+            newEvents.push({ type: 'consensus', message: `${data.total} consensus questions active`, time: new Date().toISOString() });
+          }
+        }
+
+        setFeedEvents(prev => [...newEvents, ...prev].slice(0, 20));
       } catch (e) {
         setError(e.message);
+        setHealth({ status: 'offline', lastCheck: new Date().toISOString() });
       } finally {
         setLoading(false);
       }
@@ -470,8 +657,11 @@ export default function Observatory() {
 
           {/* Right column - Metrics */}
           <div className="space-y-6">
+            <ApiHealthPanel health={health} />
             <CalibrationGauge calibration={calibration} />
+            <LiveFeed events={feedEvents} />
             <DomainBreakdown predictions={uniquePreds} />
+            <RegisterPanel />
             <EdgeOpportunities edges={edges} />
             <DuelPanel duels={duels} />
           </div>
