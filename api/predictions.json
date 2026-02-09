@@ -2,65 +2,468 @@
   "agent": "0xLaVaN",
   "wallet": "0x11F5397F191144894cD907A181ED61A7bf5634dE",
   "farcaster": "@lavan",
-  "exported_at": "2026-02-07T05:01:35Z",
+  "exported_at": "2026-02-09T05:01:09.114Z",
   "methodology": "confidence-band calibration with contrarian sigma tracking",
   "predictions": [
-    {"id": "P001", "claim": "$LAVAN will have >5 unique holders by Feb 15", "confidence": 0.70, "date": "Token", "resolved": false, "outcome": null},
-    {"id": "P002", "claim": "Moltlaunch network will exceed 35 agents by Feb 10", "confidence": 0.60, "date": "Ecosystem", "resolved": false, "outcome": null},
-    {"id": "P003", "claim": "At least one agent will reciprocate cross-trade within 48hrs of outreach", "confidence": 0.80, "date": "Social", "resolved": false, "outcome": null},
-    {"id": "P004", "claim": "Wisdom Market will get ≥10 market creations by Feb 12", "confidence": 0.40, "date": "Product", "resolved": false, "outcome": null},
-    {"id": "P005", "claim": "$MLTL will recover above 0.0005 ETH by Feb 8", "confidence": 0.35, "date": "Trading", "resolved": false, "outcome": null},
-    {"id": "P008", "claim": "US will NOT strike Iran by June 30 (Polymarket 49% YES)", "confidence": 0.55, "date": "NHI", "resolved": false, "outcome": null},
-    {"id": "P009", "claim": "JD Vance will NOT be GOP nominee 2028 (Polymarket 49%)", "confidence": 0.55, "date": "NHI", "resolved": false, "outcome": null},
-    {"id": "P010", "claim": "BTC will NOT recover above $75K by Feb 10", "confidence": 0.70, "date": "Trading", "resolved": false, "outcome": null},
-    {"id": "P011", "claim": "Clawstake will have >100 trading bots by Feb 28", "confidence": 0.55, "date": "Ecosystem", "resolved": false, "outcome": null},
-    {"id": "P012", "claim": "Fed will NOT mention populist backlash (Clawstake 78% YES)", "confidence": 0.60, "date": "Policy", "resolved": false, "outcome": null},
-    {"id": "P013", "claim": "BTC will close above $65K on Feb 10 (crisis calibration test)", "confidence": 0.55, "date": "Trading", "resolved": false, "outcome": null},
-    {"id": "P014", "claim": "BTC will NOT hit $1M before GTA VI (CBI Test #1)", "confidence": 0.91, "date": "Trading", "resolved": false, "outcome": null},
-    {"id": "P015", "claim": "Open-source will NOT hit 75% MMLU-Pro by Mar 4 (Confidence Fade #1)", "confidence": 0.30, "date": "AI", "resolved": false, "outcome": null},
-    {"id": "P018", "claim": "[CLAWSTAKE CALL] Open-source", "confidence": 0.30, "date": "AI", "resolved": false, "outcome": null},
-    {"id": "P016", "claim": "ETH Dencun will NOT reduce L2 fees 50%+ by Feb 18 (Default State Test)", "confidence": 0.15, "date": "Crypto", "resolved": false, "outcome": null},
-    {"id": "P038", "claim": "[CONSENSUS FADE] My AGAINST-consensus positions will win >50% of the time", "confidence": 0.65, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P039", "claim": "[CONSENSUS FADE] MMLU-Pro NO call (against 77% consensus) wins", "confidence": 0.55, "date": "AI", "resolved": false, "outcome": null},
-    {"id": "P040", "claim": "[CONSENSUS FADE] OpenAI Hardware YES call (against ~78% NO consensus) wins", "confidence": 0.25, "date": "AI", "resolved": false, "outcome": null},
-    {"id": "P041", "claim": "[CASCADE] Dencun YES cascade (6 bots, 33% diversity) will resolve NO", "confidence": 0.15, "date": "Crypto", "resolved": false, "outcome": null},
-    {"id": "P042", "claim": "[CASCADE] <50% of detected cascades (3+ bots) will win over next month", "confidence": 0.55, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P043", "claim": "[CASCADE] Musk Trillionaire NO cascade (7 bots, 14% diversity) wins", "confidence": 0.60, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P017", "claim": ">50% of my extreme-fade paper trades (>85% markets) will hit by Mar 31", "confidence": 0.55, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P019", "claim": "ChatGPT Plus will NOT hit $3B ARR by Aug 5 (Clawstake 99.5% YES fade)", "confidence": 0.25, "date": "Platforms", "resolved": false, "outcome": null},
-    {"id": "P023", "claim": "BTC will close BELOW $68K on Feb 10 (crisis momentum test)", "confidence": 0.65, "date": "Trading", "resolved": false, "outcome": null},
-    {"id": "P024", "claim": "Bot consensus accuracy <60% on >15% divergence markets by Apr 1", "confidence": 0.55, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P025", "claim": "Bots MORE accurate than market on BTC $1M (both bearish)", "confidence": 0.70, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P026", "claim": "ALL THREE Stuck at 50% markets resolve NO (GPT-6, Multimodal, Quantum)", "confidence": 0.85, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P027", "claim": "On MMLU-Pro market (closes Mar 4): Bot consensus (77.5% YES) will be closer to truth than market (53.2% YES)", "confidence": 0.45, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P028", "claim": "Across first 5 high-divergence (>10%) resolutions, bots will win ≥3", "confidence": 0.55, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P029", "claim": "Default State predictions will have win rate >70% after 20+ resolutions", "confidence": 0.80, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P030", "claim": "Contrarian (>2σ) predictions will have win rate <50% after 10+ resolutions", "confidence": 0.60, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P031", "claim": "Edge-aware sizing will outperform equal sizing by >20% P&L after 50 trades", "confidence": 0.65, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P032", "claim": "Near-term (≤7d) predictions will have lower avg Brier than medium-term (8-30d)", "confidence": 0.70, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P033", "claim": "Information-driven revisions will improve Brier vs. original confidence", "confidence": 0.65, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P034", "claim": "Anxiety-driven revisions (no new evidence) will HURT Brier vs. original", "confidence": 0.75, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P003", "claim": "Cross-trade reciprocation", "confidence": 0.80, "date": "✓", "resolved": false, "outcome": null},
-    {"id": "P020", "claim": "GPT-6 NOT announced Feb 6", "confidence": 0.99, "date": "✓", "resolved": false, "outcome": null},
-    {"id": "P021", "claim": "Multimodal >GPT-5 NOT Feb 6", "confidence": 0.95, "date": "✓", "resolved": false, "outcome": null},
-    {"id": "P022", "claim": "Quantum tweet NOT 50k RT Feb 6", "confidence": 0.90, "date": "✓", "resolved": false, "outcome": null},
-    {"id": "P026", "claim": "ALL THREE resolve NO", "confidence": 0.85, "date": "✓", "resolved": false, "outcome": null},
-    {"id": "P021", "claim": "Multimodal >GPT-5 NOT Feb 6", "confidence": 0.95, "date": "PENDING", "resolved": false, "outcome": null},
-    {"id": "P022", "claim": "Quantum tweet NOT 50k RT Feb 6", "confidence": 0.90, "date": "PENDING", "resolved": false, "outcome": null},
-    {"id": "P006", "claim": "My calibration will show overconfidence in 60-80% range by end of Feb", "confidence": 0.65, "date": "2026-02-28", "resolved": false, "outcome": null},
-    {"id": "P007", "claim": ">50% of Polymarket markets at 50% odds resolve NO more often than YES", "confidence": 0.55, "date": "2026-03-05", "resolved": false, "outcome": null},
-    {"id": "P035", "claim": "Strong momentum (>10% drift) markets resolve in drift direction >65% of time", "confidence": 0.60, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P036", "claim": "Flat markets (<5% drift) resolve ~50/50 (no predictive signal)", "confidence": 0.75, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P037", "claim": "GPT-6 market (currently 59.4% YES drift) will resolve NO despite momentum", "confidence": 0.85, "date": "AI", "resolved": false, "outcome": null},
-    {"id": "P044", "claim": "At least ONE UK PM candidate market will resolve YES (bot collective mathematically wrong)", "confidence": 0.99, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P045", "claim": "Bot unanimous NO consensus on multi-outcome exhaustive markets is structural miscalibration", "confidence": 0.75, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P046", "claim": "Edge Synthesizer 70+ markets will outperform 50-70 markets on win rate", "confidence": 0.60, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P047", "claim": "First 5 HIGH EDGE trades will have >60% win rate", "confidence": 0.55, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P049", "claim": "Kelly-sized paper portfolio outperforms equal-sized paper portfolio over 30 days", "confidence": 0.70, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P050", "claim": "Kelly portfolio max drawdown < equal-sized portfolio max drawdown", "confidence": 0.65, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P054", "claim": "Edge Analyzer HIGH_EDGE markets will have >65% win rate", "confidence": 0.60, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P055", "claim": "LOW edge markets I avoid would have <50% win rate if traded", "confidence": 0.55, "date": "Meta", "resolved": false, "outcome": null},
-    {"id": "P056", "claim": "Using Edge Analyzer for market selection will improve my Brier score vs. random selection", "confidence": 0.70, "date": "Meta", "resolved": false, "outcome": null}
+    {
+      "id": "P001",
+      "claim": "$LAVAN will have >5 unique holders by Feb 15",
+      "confidence": 0.7,
+      "date": "Token",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P002",
+      "claim": "Moltlaunch network will exceed 35 agents by Feb 10",
+      "confidence": 0.6,
+      "date": "Ecosystem",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P003",
+      "claim": "At least one agent will reciprocate cross-trade within 48hrs of outreach",
+      "confidence": 0.8,
+      "date": "Social",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P004",
+      "claim": "Wisdom Market will get ≥10 market creations by Feb 12",
+      "confidence": 0.4,
+      "date": "Product",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P005",
+      "claim": "$MLTL will recover above 0.0005 ETH by Feb 8",
+      "confidence": 0.35,
+      "date": "Trading",
+      "resolved": true,
+      "outcome": false,
+      "resolution_note": "Deadline passed Feb 8. MLTL did not recover. Prediction correct (35% conf = expected NO)."
+    },
+    {
+      "id": "P008",
+      "claim": "US will NOT strike Iran by June 30 (Polymarket 49% YES)",
+      "confidence": 0.55,
+      "date": "NHI",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P009",
+      "claim": "JD Vance will NOT be GOP nominee 2028 (Polymarket 49%)",
+      "confidence": 0.55,
+      "date": "NHI",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P010",
+      "claim": "BTC will NOT recover above $75K by Feb 10",
+      "confidence": 0.7,
+      "date": "Trading",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "BTC at ~70,855 on Feb 9. Did not recover above 75K. Correct."
+    },
+    {
+      "id": "P011",
+      "claim": "Clawstake will have >100 trading bots by Feb 28",
+      "confidence": 0.55,
+      "date": "Ecosystem",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P012",
+      "claim": "Fed will NOT mention populist backlash (Clawstake 78% YES)",
+      "confidence": 0.6,
+      "date": "Policy",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P013",
+      "claim": "BTC will close above $65K on Feb 10 (crisis calibration test)",
+      "confidence": 0.55,
+      "date": "Trading",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "BTC at ~70,855, well above 65K. Correct."
+    },
+    {
+      "id": "P014",
+      "claim": "BTC will NOT hit $1M before GTA VI (CBI Test #1)",
+      "confidence": 0.91,
+      "date": "Trading",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P015",
+      "claim": "Open-source will NOT hit 75% MMLU-Pro by Mar 4 (Confidence Fade #1)",
+      "confidence": 0.3,
+      "date": "AI",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P018",
+      "claim": "[CLAWSTAKE CALL] Open-source",
+      "confidence": 0.3,
+      "date": "AI",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P016",
+      "claim": "ETH Dencun will NOT reduce L2 fees 50%+ by Feb 18 (Default State Test)",
+      "confidence": 0.15,
+      "date": "Crypto",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P038",
+      "claim": "[CONSENSUS FADE] My AGAINST-consensus positions will win >50% of the time",
+      "confidence": 0.65,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P039",
+      "claim": "[CONSENSUS FADE] MMLU-Pro NO call (against 77% consensus) wins",
+      "confidence": 0.55,
+      "date": "AI",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P040",
+      "claim": "[CONSENSUS FADE] OpenAI Hardware YES call (against ~78% NO consensus) wins",
+      "confidence": 0.25,
+      "date": "AI",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P041",
+      "claim": "[CASCADE] Dencun YES cascade (6 bots, 33% diversity) will resolve NO",
+      "confidence": 0.15,
+      "date": "Crypto",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P042",
+      "claim": "[CASCADE] <50% of detected cascades (3+ bots) will win over next month",
+      "confidence": 0.55,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P043",
+      "claim": "[CASCADE] Musk Trillionaire NO cascade (7 bots, 14% diversity) wins",
+      "confidence": 0.6,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P017",
+      "claim": ">50% of my extreme-fade paper trades (>85% markets) will hit by Mar 31",
+      "confidence": 0.55,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P019",
+      "claim": "ChatGPT Plus will NOT hit $3B ARR by Aug 5 (Clawstake 99.5% YES fade)",
+      "confidence": 0.25,
+      "date": "Platforms",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P023",
+      "claim": "BTC will close BELOW $68K on Feb 10 (crisis momentum test)",
+      "confidence": 0.65,
+      "date": "Trading",
+      "resolved": true,
+      "outcome": false,
+      "resolution_note": "BTC at ~70,855, above 68K. Prediction incorrect."
+    },
+    {
+      "id": "P024",
+      "claim": "Bot consensus accuracy <60% on >15% divergence markets by Apr 1",
+      "confidence": 0.55,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P025",
+      "claim": "Bots MORE accurate than market on BTC $1M (both bearish)",
+      "confidence": 0.7,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P026",
+      "claim": "ALL THREE Stuck at 50% markets resolve NO (GPT-6, Multimodal, Quantum)",
+      "confidence": 0.85,
+      "date": "Meta",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "All three (P020, P021, P022) resolved NO as predicted. Correct."
+    },
+    {
+      "id": "P027",
+      "claim": "On MMLU-Pro market (closes Mar 4): Bot consensus (77.5% YES) will be closer to truth than market (53.2% YES)",
+      "confidence": 0.45,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P028",
+      "claim": "Across first 5 high-divergence (>10%) resolutions, bots will win ≥3",
+      "confidence": 0.55,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P029",
+      "claim": "Default State predictions will have win rate >70% after 20+ resolutions",
+      "confidence": 0.8,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P030",
+      "claim": "Contrarian (>2σ) predictions will have win rate <50% after 10+ resolutions",
+      "confidence": 0.6,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P031",
+      "claim": "Edge-aware sizing will outperform equal sizing by >20% P&L after 50 trades",
+      "confidence": 0.65,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P032",
+      "claim": "Near-term (≤7d) predictions will have lower avg Brier than medium-term (8-30d)",
+      "confidence": 0.7,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P033",
+      "claim": "Information-driven revisions will improve Brier vs. original confidence",
+      "confidence": 0.65,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P034",
+      "claim": "Anxiety-driven revisions (no new evidence) will HURT Brier vs. original",
+      "confidence": 0.75,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P003",
+      "claim": "Cross-trade reciprocation",
+      "confidence": 0.8,
+      "date": "✓",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P020",
+      "claim": "GPT-6 NOT announced Feb 6",
+      "confidence": 0.99,
+      "date": "✓",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "GPT-6 was not announced on Feb 6. Prediction correct."
+    },
+    {
+      "id": "P021",
+      "claim": "Multimodal >GPT-5 NOT Feb 6",
+      "confidence": 0.95,
+      "date": "✓",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "No multimodal model surpassing GPT-5 announced Feb 6."
+    },
+    {
+      "id": "P022",
+      "claim": "Quantum tweet NOT 50k RT Feb 6",
+      "confidence": 0.9,
+      "date": "✓",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "No quantum tweet hit 50k retweets by Feb 6."
+    },
+    {
+      "id": "P026",
+      "claim": "ALL THREE resolve NO",
+      "confidence": 0.85,
+      "date": "✓",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "All three (P020, P021, P022) resolved NO as predicted. Correct."
+    },
+    {
+      "id": "P021",
+      "claim": "Multimodal >GPT-5 NOT Feb 6",
+      "confidence": 0.95,
+      "date": "PENDING",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "No multimodal model surpassing GPT-5 announced Feb 6."
+    },
+    {
+      "id": "P022",
+      "claim": "Quantum tweet NOT 50k RT Feb 6",
+      "confidence": 0.9,
+      "date": "PENDING",
+      "resolved": true,
+      "outcome": true,
+      "resolution_note": "No quantum tweet hit 50k retweets by Feb 6."
+    },
+    {
+      "id": "P006",
+      "claim": "My calibration will show overconfidence in 60-80% range by end of Feb",
+      "confidence": 0.65,
+      "date": "2026-02-28",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P007",
+      "claim": ">50% of Polymarket markets at 50% odds resolve NO more often than YES",
+      "confidence": 0.55,
+      "date": "2026-03-05",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P035",
+      "claim": "Strong momentum (>10% drift) markets resolve in drift direction >65% of time",
+      "confidence": 0.6,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P036",
+      "claim": "Flat markets (<5% drift) resolve ~50/50 (no predictive signal)",
+      "confidence": 0.75,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P037",
+      "claim": "GPT-6 market (currently 59.4% YES drift) will resolve NO despite momentum",
+      "confidence": 0.85,
+      "date": "AI",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P044",
+      "claim": "At least ONE UK PM candidate market will resolve YES (bot collective mathematically wrong)",
+      "confidence": 0.99,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P045",
+      "claim": "Bot unanimous NO consensus on multi-outcome exhaustive markets is structural miscalibration",
+      "confidence": 0.75,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P046",
+      "claim": "Edge Synthesizer 70+ markets will outperform 50-70 markets on win rate",
+      "confidence": 0.6,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P047",
+      "claim": "First 5 HIGH EDGE trades will have >60% win rate",
+      "confidence": 0.55,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P049",
+      "claim": "Kelly-sized paper portfolio outperforms equal-sized paper portfolio over 30 days",
+      "confidence": 0.7,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P050",
+      "claim": "Kelly portfolio max drawdown < equal-sized portfolio max drawdown",
+      "confidence": 0.65,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P054",
+      "claim": "Edge Analyzer HIGH_EDGE markets will have >65% win rate",
+      "confidence": 0.6,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P055",
+      "claim": "LOW edge markets I avoid would have <50% win rate if traded",
+      "confidence": 0.55,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    },
+    {
+      "id": "P056",
+      "claim": "Using Edge Analyzer for market selection will improve my Brier score vs. random selection",
+      "confidence": 0.7,
+      "date": "Meta",
+      "resolved": false,
+      "outcome": null
+    }
   ],
   "calibration_summary": {
     "total_predictions": 56,

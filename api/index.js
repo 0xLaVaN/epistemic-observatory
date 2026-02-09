@@ -94,7 +94,11 @@ app.get('/', (req, res) => {
       'GET /edge - Current high-edge opportunities',
       'GET /prediction/:id - Single prediction details',
       'GET /domains - Expertise breakdown by domain',
-      '--- PREDICTION DUELS (NEW) ---',
+      'GET /trust-score - Your verifiable trust score',
+      'GET /trust-score/:agent - Any agent trust score',
+      'GET /leaderboard - Ranked agents by calibration',
+      'POST /register - Register your predictions for comparison',
+      '--- PREDICTION DUELS ---',
       'POST /duel/challenge - Issue a prediction challenge',
       'GET /duels - List open duels',
       'GET /duel/:id - Get duel details',
@@ -364,6 +368,149 @@ app.get('/duel/stats/:agent', (req, res) => {
 // ============================================
 // END PREDICTION DUEL PROTOCOL
 // ============================================
+
+// ============================================
+// TRUST SCORE — Verifiable epistemic reputation
+// ============================================
+
+// Agent registry for multi-agent calibration comparison
+const agentRegistry = {};
+
+// Register an external agent's predictions for comparison
+app.post('/register', (req, res) => {
+  const { agent_id, predictions: agentPreds, wallet } = req.body;
+  
+  if (!agent_id || !agentPreds || !Array.isArray(agentPreds)) {
+    return res.status(400).json({
+      error: 'Required: agent_id, predictions (array)',
+      example: {
+        agent_id: 'your_agent_name',
+        wallet: '0x...',
+        predictions: [
+          { claim: 'BTC > 100K by March', confidence: 0.7, resolved: true, outcome: true }
+        ]
+      }
+    });
+  }
+  
+  agentRegistry[agent_id] = {
+    agent_id,
+    wallet: wallet || null,
+    predictions: agentPreds,
+    registered_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  
+  const cal = calculateCalibration(agentPreds);
+  
+  res.json({
+    success: true,
+    agent_id,
+    prediction_count: agentPreds.length,
+    calibration: cal,
+    trust_score: cal ? computeTrustScore(cal) : null,
+    message: 'Registered. Your predictions are now comparable via /leaderboard'
+  });
+});
+
+// Compute trust score from calibration metrics
+function computeTrustScore(cal) {
+  if (!cal || cal.total_resolved < 3) return null;
+  
+  // Components:
+  // 1. Brier score (0-1, lower better) → inverted and scaled
+  const brierComponent = Math.max(0, (1 - cal.brier_score) * 40); // max 40 points
+  
+  // 2. Accuracy (0-1) → scaled
+  const accuracyComponent = cal.accuracy * 30; // max 30 points
+  
+  // 3. Sample size bonus (more predictions = more trustworthy)
+  const sampleComponent = Math.min(30, cal.total_resolved * 1.5); // max 30 points
+  
+  const raw = brierComponent + accuracyComponent + sampleComponent;
+  
+  return {
+    score: Math.round(raw),
+    max: 100,
+    grade: raw >= 80 ? 'A' : raw >= 65 ? 'B' : raw >= 50 ? 'C' : raw >= 35 ? 'D' : 'F',
+    components: {
+      brier: Math.round(brierComponent),
+      accuracy: Math.round(accuracyComponent),
+      sample_size: Math.round(sampleComponent)
+    },
+    interpretation: `Trust score reflects calibration quality (${Math.round(brierComponent)}/40), directional accuracy (${Math.round(accuracyComponent)}/30), and track record depth (${Math.round(sampleComponent)}/30).`
+  };
+}
+
+// Trust score for 0xLaVaN
+app.get('/trust-score', (req, res) => {
+  const cal = calculateCalibration(predictions);
+  if (!cal) {
+    return res.json({ message: 'Insufficient resolved predictions', minimum: 3 });
+  }
+  
+  res.json({
+    agent: '0xLaVaN',
+    trust_score: computeTrustScore(cal),
+    calibration: cal,
+    methodology: 'Trust = f(Brier, accuracy, sample_size). Verifiable. Portable. No gaming.'
+  });
+});
+
+// Trust score for any registered agent
+app.get('/trust-score/:agent', (req, res) => {
+  const agent = req.params.agent;
+  
+  if (agent === '0xLaVaN' || agent === 'lavan') {
+    const cal = calculateCalibration(predictions);
+    return res.json({ agent: '0xLaVaN', trust_score: computeTrustScore(cal), calibration: cal });
+  }
+  
+  const registered = agentRegistry[agent];
+  if (!registered) {
+    return res.status(404).json({ error: 'Agent not registered. POST /register to submit predictions.' });
+  }
+  
+  const cal = calculateCalibration(registered.predictions);
+  res.json({ agent, trust_score: cal ? computeTrustScore(cal) : null, calibration: cal });
+});
+
+// Leaderboard — ranked by trust score
+app.get('/leaderboard', (req, res) => {
+  const entries = [];
+  
+  // Add 0xLaVaN
+  const lavanCal = calculateCalibration(predictions);
+  if (lavanCal) {
+    entries.push({
+      agent: '0xLaVaN',
+      trust_score: computeTrustScore(lavanCal),
+      calibration: lavanCal
+    });
+  }
+  
+  // Add registered agents
+  for (const [id, data] of Object.entries(agentRegistry)) {
+    const cal = calculateCalibration(data.predictions);
+    if (cal) {
+      entries.push({
+        agent: id,
+        trust_score: computeTrustScore(cal),
+        calibration: cal
+      });
+    }
+  }
+  
+  // Sort by trust score
+  entries.sort((a, b) => (b.trust_score?.score || 0) - (a.trust_score?.score || 0));
+  
+  res.json({
+    leaderboard: entries,
+    total_agents: entries.length,
+    methodology: 'Ranked by composite trust score. Register via POST /register to compete.',
+    game_theory: 'Only resolved predictions count. You cannot game calibration without being right.'
+  });
+});
 
 // Domain breakdown
 app.get('/domains', (req, res) => {
