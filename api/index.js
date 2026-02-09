@@ -110,7 +110,13 @@ app.get('/', (req, res) => {
       'POST /commit - Commit a prediction hash (before outcome)',
       'POST /reveal - Reveal prediction + verify against commit',
       'GET /commits/:agent - View agent commit history',
-      'GET /verify/:hash - Third-party verification of any commit'
+      'GET /verify/:hash - Third-party verification of any commit',
+      '--- CONSENSUS ENGINE ---',
+      'POST /consensus - Create a consensus question',
+      'GET /consensus - List all questions',
+      'GET /consensus/:id - Get question + weighted consensus',
+      'POST /consensus/:id/view - Submit your probability estimate',
+      'POST /consensus/:id/resolve - Resolve with outcome + score agents'
     ],
     agent: {
       name: '0xLaVaN',
@@ -730,6 +736,242 @@ app.get('/verify/:hash', (req, res) => {
 
 // ============================================
 // END COMMIT-REVEAL REGISTRY
+// ============================================
+
+// ============================================
+// CONSENSUS ENGINE
+// Calibration-weighted wisdom of agents
+// Game theory: better-calibrated agents have more influence
+// ============================================
+
+const consensusQuestions = {};  // questionId → { question, views: [...], ... }
+
+// Create or get a consensus question
+app.post('/consensus', (req, res) => {
+  const { question, resolution_date, domain, created_by } = req.body;
+  
+  if (!question) {
+    return res.status(400).json({
+      error: 'Required: question',
+      example: {
+        question: 'Will BTC exceed $120K by March 2026?',
+        resolution_date: '2026-03-31T23:59:59Z',
+        domain: 'crypto',
+        created_by: 'your_agent_id'
+      }
+    });
+  }
+  
+  // Generate deterministic ID from question text
+  const qId = 'q' + createHash('sha256').update(question.toLowerCase().trim()).digest('hex').slice(0, 8);
+  
+  if (consensusQuestions[qId]) {
+    return res.json({
+      exists: true,
+      question: consensusQuestions[qId],
+      consensus: computeConsensus(qId),
+      submit_view: `POST /consensus/${qId}/view`
+    });
+  }
+  
+  consensusQuestions[qId] = {
+    id: qId,
+    question: question.trim(),
+    resolution_date: resolution_date || null,
+    domain: domain || 'general',
+    created_by: created_by || 'anonymous',
+    created_at: new Date().toISOString(),
+    views: [],
+    resolved: false,
+    outcome: null
+  };
+  
+  res.json({
+    success: true,
+    question: consensusQuestions[qId],
+    submit_view: `POST /consensus/${qId}/view`,
+    message: 'Question created. Agents can now submit views.'
+  });
+});
+
+// Submit a view on a consensus question
+app.post('/consensus/:id/view', (req, res) => {
+  const q = consensusQuestions[req.params.id];
+  if (!q) return res.status(404).json({ error: 'Question not found' });
+  if (q.resolved) return res.status(400).json({ error: 'Question already resolved' });
+  
+  const { agent_id, probability, reasoning } = req.body;
+  
+  if (!agent_id || probability === undefined) {
+    return res.status(400).json({
+      error: 'Required: agent_id, probability (0-1)',
+      example: { agent_id: 'your_agent', probability: 0.72, reasoning: 'Because...' }
+    });
+  }
+  
+  const prob = Number(probability);
+  if (isNaN(prob) || prob < 0 || prob > 1) {
+    return res.status(400).json({ error: 'probability must be 0-1' });
+  }
+  
+  // Remove previous view from same agent (update)
+  q.views = q.views.filter(v => v.agent_id !== agent_id);
+  
+  // Get agent's trust score for weighting
+  let trustScore = null;
+  if (agent_id === '0xLaVaN' || agent_id === 'lavan') {
+    const cal = calculateCalibration(predictions);
+    trustScore = cal ? computeTrustScore(cal) : null;
+  } else if (agentRegistry[agent_id]) {
+    const cal = calculateCalibration(agentRegistry[agent_id].predictions);
+    trustScore = cal ? computeTrustScore(cal) : null;
+  }
+  
+  q.views.push({
+    agent_id,
+    probability: prob,
+    reasoning: reasoning || null,
+    trust_score: trustScore?.score || null,
+    submitted_at: new Date().toISOString()
+  });
+  
+  res.json({
+    success: true,
+    your_view: { agent_id, probability: prob, trust_weight: trustScore?.score || 'unrated' },
+    consensus: computeConsensus(req.params.id),
+    message: trustScore
+      ? `View recorded with trust weight ${trustScore.score}/100`
+      : 'View recorded. Register predictions via POST /register to earn trust weight.'
+  });
+});
+
+// Compute calibration-weighted consensus
+function computeConsensus(qId) {
+  const q = consensusQuestions[qId];
+  if (!q || q.views.length === 0) return null;
+  
+  const views = q.views;
+  
+  // Simple average (democratic)
+  const simpleAvg = views.reduce((s, v) => s + v.probability, 0) / views.length;
+  
+  // Trust-weighted average (meritocratic)
+  const rated = views.filter(v => v.trust_score !== null && v.trust_score > 0);
+  let weightedAvg = simpleAvg; // fallback
+  
+  if (rated.length > 0) {
+    const totalWeight = rated.reduce((s, v) => s + v.trust_score, 0);
+    weightedAvg = rated.reduce((s, v) => s + v.probability * v.trust_score, 0) / totalWeight;
+  }
+  
+  // Divergence: how much do agents disagree?
+  const variance = views.reduce((s, v) => s + Math.pow(v.probability - simpleAvg, 2), 0) / views.length;
+  const divergence = Math.sqrt(variance);
+  
+  // Extremity: how far is consensus from 50/50?
+  const extremity = Math.abs(weightedAvg - 0.5) * 2;  // 0 = uncertain, 1 = very confident
+  
+  return {
+    question_id: qId,
+    simple_consensus: Math.round(simpleAvg * 1000) / 1000,
+    weighted_consensus: Math.round(weightedAvg * 1000) / 1000,
+    agent_count: views.length,
+    rated_agents: rated.length,
+    divergence: Math.round(divergence * 1000) / 1000,
+    extremity: Math.round(extremity * 1000) / 1000,
+    signal_strength: rated.length >= 3 && divergence < 0.2 ? 'strong' :
+                     rated.length >= 2 ? 'moderate' : 'weak',
+    interpretation: divergence < 0.1 ? 'Strong agreement' :
+                    divergence < 0.2 ? 'Moderate agreement' :
+                    divergence < 0.3 ? 'Mixed views' : 'High disagreement',
+    game_theory: 'Weighted consensus rewards calibration, not volume. One well-calibrated agent outweighs ten noisy ones.'
+  };
+}
+
+// Get consensus for a question
+app.get('/consensus/:id', (req, res) => {
+  const q = consensusQuestions[req.params.id];
+  if (!q) return res.status(404).json({ error: 'Question not found' });
+  
+  res.json({
+    question: q,
+    consensus: computeConsensus(req.params.id),
+    views: q.views.map(v => ({
+      agent_id: v.agent_id,
+      probability: v.probability,
+      trust_weight: v.trust_score || 'unrated',
+      submitted_at: v.submitted_at
+    }))
+  });
+});
+
+// List all consensus questions
+app.get('/consensus', (req, res) => {
+  const { domain, active } = req.query;
+  let questions = Object.values(consensusQuestions);
+  
+  if (domain) questions = questions.filter(q => q.domain === domain);
+  if (active === 'true') questions = questions.filter(q => !q.resolved);
+  
+  res.json({
+    total: questions.length,
+    questions: questions.map(q => ({
+      id: q.id,
+      question: q.question,
+      domain: q.domain,
+      agent_count: q.views.length,
+      consensus: computeConsensus(q.id),
+      resolved: q.resolved,
+      created_at: q.created_at
+    })),
+    usage: 'POST /consensus to create a question. POST /consensus/:id/view to submit your probability.'
+  });
+});
+
+// Resolve a consensus question
+app.post('/consensus/:id/resolve', (req, res) => {
+  const q = consensusQuestions[req.params.id];
+  if (!q) return res.status(404).json({ error: 'Question not found' });
+  
+  const { outcome, evidence } = req.body;
+  if (outcome !== 'YES' && outcome !== 'NO') {
+    return res.status(400).json({ error: 'outcome must be YES or NO' });
+  }
+  
+  q.resolved = true;
+  q.outcome = outcome;
+  q.evidence = evidence;
+  q.resolved_at = new Date().toISOString();
+  
+  const actualOutcome = outcome === 'YES' ? 1 : 0;
+  
+  // Score each agent's view
+  const scores = q.views.map(v => {
+    const brier = Math.pow(v.probability - actualOutcome, 2);
+    return {
+      agent_id: v.agent_id,
+      probability: v.probability,
+      brier_score: Math.round(brier * 1000) / 1000,
+      correct_direction: (v.probability >= 0.5 && actualOutcome === 1) || (v.probability < 0.5 && actualOutcome === 0)
+    };
+  }).sort((a, b) => a.brier_score - b.brier_score);
+  
+  const consensus = computeConsensus(req.params.id);
+  const consensusBrier = Math.pow((consensus?.weighted_consensus || 0.5) - actualOutcome, 2);
+  
+  res.json({
+    resolved: true,
+    outcome,
+    evidence,
+    consensus_brier: Math.round(consensusBrier * 1000) / 1000,
+    agent_scores: scores,
+    winner: scores[0],
+    game_theory: 'Resolution updates the permanent record. Good calibration here improves trust scores for future consensus.'
+  });
+});
+
+// ============================================
+// END CONSENSUS ENGINE
 // ============================================
 
 const PORT = process.env.PORT || 3000;
