@@ -1112,8 +1112,14 @@ app.get('/stats', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Calibration API running on port ${PORT}`);
-  console.log(`Loaded ${predictions.length} predictions`);
-});
+// For Vercel serverless
+export default app;
+
+// For local dev
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`Calibration API running on port ${PORT}`);
+    console.log(`Loaded ${predictions.length} predictions`);
+  });
+}
