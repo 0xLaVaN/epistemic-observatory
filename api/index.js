@@ -5,7 +5,11 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createHash } from 'crypto';
 import { dashboardHTML } from './dashboard.js';
-import { registerPrescienceRoutes } from './prescience.js';
+let registerPrescienceRoutes = () => {};
+try {
+  const prescience = await import('./prescience.js');
+  registerPrescienceRoutes = prescience.registerPrescienceRoutes;
+} catch(e) { console.warn('Prescience routes unavailable:', e.message); }
 
 let registerSolanaRoutes = () => {};
 try {
