@@ -368,6 +368,7 @@ function NavBar({ active, onChange }) {
     { id: 'lookup', label: 'WALLET SCAN', icon: '⬡' },
     { id: 'scanner', label: 'SCANNER', icon: '⊛' },
     { id: 'signals', label: 'SIGNALS', icon: '◎', href: '/prescience/signals' },
+    { id: 'backtest', label: 'BACKTEST', icon: '▣', href: '/prescience/backtest' },
     { id: 'markets', label: 'MARKETS', icon: '◇' },
   ];
   
