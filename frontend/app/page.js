@@ -469,6 +469,9 @@ function Header({ stats }) {
           <a href="/arena" className="text-[10px] text-[#ff00f0] hover:text-[#ff00f0]/70 transition-colors border border-[#ff00f0]/30 px-3 py-1.5 rounded hover:bg-[#ff00f0]/10 font-bold tracking-wider">
             ⚔ ARENA
           </a>
+          <a href="/consensus" className="text-[10px] text-[#00f0ff] hover:text-[#00f0ff]/70 transition-colors border border-[#00f0ff]/30 px-3 py-1.5 rounded hover:bg-[#00f0ff]/10 font-bold tracking-wider">
+            ⬡ CONSENSUS
+          </a>
           <div className="text-right">
             <div className="text-[9px] text-white/30 tracking-wider">PREDICTIONS</div>
             <div className="text-cyber-cyan font-bold text-xl">{stats.total}</div>

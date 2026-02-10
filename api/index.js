@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createHash } from 'crypto';
 import { dashboardHTML } from './dashboard.js';
+import { registerSolanaRoutes } from './solana-attestation.js';
+import { registerPrescienceRoutes } from './prescience.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -112,11 +114,23 @@ app.get('/', (req, res) => {
       'GET /badge/:agent - Embeddable SVG badge for any registered agent',
       '  ?style=compact|full (default: full)',
       '  ?theme=dark|light (default: dark)',
+      '--- ON-CHAIN ATTESTATION (Solana) ---',
+      'GET /onchain - Program info + deployment status',
+      'GET /onchain/profile/:pubkey - Agent on-chain profile + Brier score',
+      'GET /onchain/attestation/:pubkey/:claim - Verified prediction attestation',
+      'GET /onchain/pda/:pubkey/:claim - Derive PDA addresses',
       '--- COMMIT-REVEAL REGISTRY ---',
       'POST /commit - Commit a prediction hash (before outcome)',
       'POST /reveal - Reveal prediction + verify against commit',
       'GET /commits/:agent - View agent commit history',
       'GET /verify/:hash - Third-party verification of any commit',
+      '--- PRESCIENCE (Insider Tracking) ---',
+      'GET /prescience — Engine info + endpoints',
+      'GET /prescience/:address — Prescience Score for a wallet',
+      'GET /prescience/leaderboard — Top suspicious wallets',
+      'GET /prescience/alerts — Recent high-score activity',
+      'GET /prescience/market/:marketId — Insider analysis per market',
+      'GET /prescience/pulse — Market health + threat level',
       '--- CONSENSUS ENGINE ---',
       'POST /consensus - Create a consensus question',
       'GET /consensus - List all questions',
@@ -1233,6 +1247,12 @@ app.get('/badge/:agent', (req, res) => {
 // ============================================
 // END SVG TRUST BADGE
 // ============================================
+
+// Register Solana on-chain attestation routes
+registerSolanaRoutes(app);
+
+// Register Prescience insider tracking routes
+registerPrescienceRoutes(app);
 
 // For Vercel serverless
 export default app;

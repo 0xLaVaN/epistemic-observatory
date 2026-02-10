@@ -1,3 +1,6 @@
 node_modules
 .next
 .vercel
+-e 
+target/
+node_modules/
