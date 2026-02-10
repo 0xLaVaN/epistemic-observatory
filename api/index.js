@@ -11,6 +11,12 @@ try {
   registerPrescienceRoutes = prescience.registerPrescienceRoutes;
 } catch(e) { console.warn('Prescience routes unavailable:', e.message); }
 
+let registerBacktestRoutes = () => {};
+try {
+  const backtest = await import('./backtest.js');
+  registerBacktestRoutes = backtest.registerBacktestRoutes;
+} catch(e) { console.warn('Backtest routes unavailable:', e.message); }
+
 let x402Middleware = (req, res, next) => next();
 let registerPricingRoute = () => {};
 try {
@@ -148,6 +154,7 @@ app.get('/', (req, res) => {
       'GET /prescience/alerts — Recent high-score activity ($0.10)',
       'GET /prescience/market/:marketId — Insider analysis per market ($0.05)',
       'GET /prescience/pulse — Market health + threat level (free)',
+      'GET /prescience/signals — Smart money copy-trade signals ($0.10)',
       'GET /prescience/pricing — x402 pricing + free tier status',
       '--- CONSENSUS ENGINE ---',
       'POST /consensus - Create a consensus question',
@@ -1277,6 +1284,7 @@ registerPricingRoute(app);
 
 // Register Prescience insider tracking routes
 registerPrescienceRoutes(app);
+registerBacktestRoutes(app);
 
 // For Vercel serverless
 export default app;

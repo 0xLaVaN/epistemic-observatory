@@ -524,42 +524,9 @@ export function registerPrescienceRoutes(app) {
     }
   });
 
-  // --- GET /prescience/:address ---
-  // Returns Prescience Score + breakdown for a wallet (MUST be after specific routes)
-  app.get('/prescience/:address', async (req, res) => {
-    try {
-      const address = req.params.address.toLowerCase();
-      const trades = await getWalletTrades(address);
-      const markets = await getResolvedMarkets(100);
-
-      if (!trades || trades.length === 0) {
-        return res.json({
-          address,
-          score: 0,
-          message: 'No Polymarket trades found for this address',
-          tradeCount: 0,
-        });
-      }
-
-      const result = computePrescienceScore(trades, markets);
-
-      res.json({
-        address,
-        ...result,
-        meta: {
-          engine: 'Prescience v1.0',
-          methodology: 'Composite score: wallet_age(15%) + bet_size(15%) + timing(25%) + win_rate(25%) + concentration(10%) + volume(10%)',
-          tagline: 'See who sees first.',
-        },
-      });
-    } catch (err) {
-      console.error('Prescience score error:', err);
-      res.status(500).json({ error: 'Failed to compute Prescience score', detail: err.message });
-    }
-  });
-
   // --- GET /prescience/scanner ---
   // Live scan of ACTIVE markets for suspicious whale activity
+  // NOTE: Must be before /:address to avoid being caught by param route
   app.get('/prescience/scanner', async (req, res) => {
     try {
       const limit = Math.min(parseInt(req.query.limit) || 15, 30);
@@ -574,12 +541,10 @@ export function registerPrescienceRoutes(app) {
           const trades = await getMarketTrades(market.conditionId, 300);
           if (!trades || trades.length < 5) continue;
 
-          // Analyze trade flow
           const wallets = {};
           let buyVolume = 0, sellVolume = 0;
           let recentBuyVolume = 0, recentSellVolume = 0;
           const now = Date.now() / 1000;
-          const oneHourAgo = now - 3600;
           const oneDayAgo = now - 86400;
 
           for (const t of trades) {
@@ -607,14 +572,12 @@ export function registerPrescienceRoutes(app) {
             entry.outcomes[outcome] = (entry.outcomes[outcome] || 0) + size;
           }
 
-          // Detect whales (top 5% by volume)
           const walletList = Object.entries(wallets).map(([addr, data]) => ({ address: addr, ...data }));
           walletList.sort((a, b) => b.volume - a.volume);
 
           const whaleThreshold = walletList.length > 0 ? walletList[Math.max(0, Math.floor(walletList.length * 0.05))].volume : 0;
           const whales = walletList.filter(w => w.volume >= whaleThreshold && w.volume > 100);
 
-          // Whale consensus — are whales aligned on an outcome?
           const whaleOutcomeVolume = {};
           for (const whale of whales) {
             for (const [outcome, vol] of Object.entries(whale.outcomes)) {
@@ -632,18 +595,13 @@ export function registerPrescienceRoutes(app) {
             }
           }
 
-          // Fresh wallet surge — new wallets trading this market recently
           const freshWallets = walletList.filter(w => {
             const ageDays = (now - w.firstSeen) / 86400;
             return ageDays < 7 && w.volume > 50;
           });
 
-          // Flow imbalance
           const totalFlow = recentBuyVolume + recentSellVolume;
           const flowImbalance = totalFlow > 0 ? (recentBuyVolume - recentSellVolume) / totalFlow : 0;
-
-          // Composite suspicion score for the MARKET
-          const whaleConcentration = whales.length > 0 && walletList.length > 0 ? whales.length / walletList.length : 0;
           const freshSurge = freshWallets.length / Math.max(1, walletList.length);
 
           const marketSuspicion = Math.round(Math.min(100,
@@ -653,7 +611,6 @@ export function registerPrescienceRoutes(app) {
             (whales.some(w => w.volume > 5000) ? 20 : whales.some(w => w.volume > 1000) ? 10 : 0)
           ));
 
-          // Parse current prices
           let currentPrices = {};
           try {
             const outcomes = JSON.parse(market.outcomes || '[]');
@@ -723,6 +680,239 @@ export function registerPrescienceRoutes(app) {
     }
   });
 
+  // --- GET /prescience/:address ---
+  // Returns Prescience Score + breakdown for a wallet (MUST be after specific routes)
+  app.get('/prescience/:address', async (req, res) => {
+    try {
+      const address = req.params.address.toLowerCase();
+      const trades = await getWalletTrades(address);
+      const markets = await getResolvedMarkets(100);
+
+      if (!trades || trades.length === 0) {
+        return res.json({
+          address,
+          score: 0,
+          message: 'No Polymarket trades found for this address',
+          tradeCount: 0,
+        });
+      }
+
+      const result = computePrescienceScore(trades, markets);
+
+      res.json({
+        address,
+        ...result,
+        meta: {
+          engine: 'Prescience v1.0',
+          methodology: 'Composite score: wallet_age(15%) + bet_size(15%) + timing(25%) + win_rate(25%) + concentration(10%) + volume(10%)',
+          tagline: 'See who sees first.',
+        },
+      });
+    } catch (err) {
+      console.error('Prescience score error:', err);
+      res.status(500).json({ error: 'Failed to compute Prescience score', detail: err.message });
+    }
+  });
+
+  // --- GET /prescience/signals ---
+  // Actionable copy-trade signals: "Follow the smart money"
+  // Identifies high-conviction whale positioning on active markets
+  // and generates trade signals with confidence scores
+  app.get('/prescience/signals', async (req, res) => {
+    try {
+      const minConfidence = parseInt(req.query.min_confidence) || 60;
+      const limit = Math.min(parseInt(req.query.limit) || 10, 25);
+      const activeMarkets = await getActiveMarkets(20);
+      const resolvedMarkets = await getResolvedMarkets(30);
+
+      // PRE-BUILD: wallet win/loss records from resolved markets (do this ONCE)
+      const walletRecords = {}; // address → { wins, total }
+      const resolvedSlice = resolvedMarkets.slice(0, 8); // limit API calls
+      for (const rm of resolvedSlice) {
+        try {
+          const rmTrades = await getMarketTrades(rm.conditionId, 300);
+          const prices = JSON.parse(rm.outcomePrices || '[]');
+          const outcomes = JSON.parse(rm.outcomes || '[]');
+          const winningIdx = prices.findIndex(p => parseFloat(p) === 1);
+          if (winningIdx === -1) continue;
+          const winningOutcome = outcomes[winningIdx];
+          
+          for (const t of rmTrades) {
+            if (t.side !== 'BUY') continue;
+            const w = t.proxyWallet?.toLowerCase();
+            if (!w) continue;
+            if (!walletRecords[w]) walletRecords[w] = { wins: 0, total: 0 };
+            walletRecords[w].total++;
+            if (t.outcome === winningOutcome) walletRecords[w].wins++;
+          }
+        } catch {}
+      }
+
+      const signals = [];
+
+      for (const market of activeMarkets.slice(0, 15)) {
+        try {
+          const trades = await getMarketTrades(market.conditionId, 500);
+          if (!trades || trades.length < 10) continue;
+
+          const now = Date.now() / 1000;
+          const oneDayAgo = now - 86400;
+          const threeDaysAgo = now - 86400 * 3;
+
+          // Parse current prices
+          let currentPrices = {};
+          try {
+            const outcomes = JSON.parse(market.outcomes || '[]');
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            outcomes.forEach((o, i) => { currentPrices[o] = parseFloat(prices[i]); });
+          } catch {}
+
+          // Analyze wallet behavior on THIS market
+          const wallets = {};
+          for (const t of trades) {
+            const w = t.proxyWallet?.toLowerCase();
+            if (!w) continue;
+            if (!wallets[w]) wallets[w] = { buys: {}, sells: {}, totalVol: 0, trades: 0, timestamps: [] };
+            const entry = wallets[w];
+            const size = (t.size || 0) * (t.price || 0);
+            entry.totalVol += size;
+            entry.trades++;
+            entry.timestamps.push(t.timestamp);
+            const outcome = t.outcome || 'unknown';
+            if (t.side === 'BUY') {
+              entry.buys[outcome] = (entry.buys[outcome] || 0) + size;
+            } else {
+              entry.sells[outcome] = (entry.sells[outcome] || 0) + size;
+            }
+          }
+
+          // Identify "smart money" using pre-built records
+          const smartWallets = [];
+          for (const [addr, data] of Object.entries(wallets)) {
+            if (data.totalVol < 100) continue;
+            const record = walletRecords[addr] || { wins: 0, total: 0 };
+            const winRate = record.total > 0 ? record.wins / record.total : 0.5;
+            const isRecent = data.timestamps.some(t => t >= threeDaysAgo);
+            
+            if (isRecent && (data.totalVol >= 500 || (record.total >= 3 && winRate >= 0.6))) {
+              smartWallets.push({
+                address: addr,
+                ...data,
+                winRate,
+                historicalTotal: record.total,
+                historicalWins: record.wins,
+              });
+            }
+          }
+
+          if (smartWallets.length === 0) continue;
+
+          // Determine smart money consensus on this market
+          const outcomeFlow = {};
+          let totalSmartVol = 0;
+          let recentSmartVol = 0;
+
+          for (const sw of smartWallets) {
+            for (const [outcome, vol] of Object.entries(sw.buys)) {
+              outcomeFlow[outcome] = (outcomeFlow[outcome] || 0) + vol;
+              totalSmartVol += vol;
+              // Check if recent
+              if (sw.timestamps.some(t => t >= oneDayAgo)) {
+                recentSmartVol += vol;
+              }
+            }
+          }
+
+          if (totalSmartVol < 100) continue;
+
+          // Find dominant outcome
+          let dominantOutcome = null;
+          let dominantVol = 0;
+          for (const [outcome, vol] of Object.entries(outcomeFlow)) {
+            if (vol > dominantVol) {
+              dominantVol = vol;
+              dominantOutcome = outcome;
+            }
+          }
+
+          const consensusStrength = totalSmartVol > 0 ? dominantVol / totalSmartVol : 0;
+          const currentPrice = currentPrices[dominantOutcome] || 0.5;
+
+          // Signal confidence: weighted by consensus strength, smart wallet count, and edge vs current price
+          const edge = Math.max(0, consensusStrength - currentPrice); // how much smart money disagrees with market
+          const walletCount = smartWallets.length;
+          const avgWinRate = smartWallets.reduce((s, w) => s + w.winRate, 0) / walletCount;
+
+          const confidence = Math.round(Math.min(100,
+            consensusStrength * 35 +          // how aligned smart money is (max 35)
+            Math.min(25, walletCount * 5) +   // number of smart wallets (max 25)
+            edge * 40 +                        // edge vs market price (max 40)
+            (avgWinRate > 0.6 ? 10 : 0)       // bonus for proven winners
+          ));
+
+          if (confidence < minConfidence) continue;
+
+          // Calculate suggested entry and target
+          const suggestedEntry = currentPrice;
+          const impliedProb = consensusStrength;
+          const expectedValue = impliedProb / currentPrice; // EV ratio
+
+          signals.push({
+            market: {
+              question: market.question,
+              conditionId: market.conditionId,
+              slug: market.slug,
+              endDate: market.endDate,
+              volume24hr: market.volume24hr,
+              volumeTotal: market.volumeNum,
+              liquidity: market.liquidityNum,
+            },
+            signal: {
+              direction: dominantOutcome,
+              confidence,
+              strength: confidence >= 85 ? 'STRONG' : confidence >= 70 ? 'MODERATE' : 'SPECULATIVE',
+              current_price: currentPrice,
+              smart_money_implied: Math.round(impliedProb * 100) / 100,
+              edge_pct: Math.round(edge * 10000) / 100,
+              expected_value: Math.round(expectedValue * 100) / 100,
+            },
+            smart_money: {
+              wallet_count: walletCount,
+              total_volume_usd: Math.round(totalSmartVol * 100) / 100,
+              recent_volume_usd: Math.round(recentSmartVol * 100) / 100,
+              avg_win_rate: Math.round(avgWinRate * 100) / 100,
+              consensus_strength: Math.round(consensusStrength * 100) / 100,
+            },
+            risk: {
+              liquidity_ok: (market.liquidityNum || 0) > 10000,
+              time_to_resolution: market.endDate || 'unknown',
+              max_loss: `$${(suggestedEntry * 100).toFixed(0)} per $100 position`,
+              max_gain: `$${((1 - suggestedEntry) * 100).toFixed(0)} per $100 position`,
+            },
+          });
+        } catch {}
+      }
+
+      signals.sort((a, b) => b.signal.confidence - a.signal.confidence);
+
+      res.json({
+        signals: signals.slice(0, limit),
+        meta: {
+          total_signals: signals.length,
+          min_confidence: minConfidence,
+          timestamp: new Date().toISOString(),
+          engine: 'Prescience Signals v1.0',
+          description: 'Copy-trade signals derived from smart money positioning on active Polymarket markets.',
+          methodology: 'Wallets are scored by historical win rate on resolved markets. High-volume, high-win-rate wallets form the "smart money" cohort. Their consensus positioning generates directional signals.',
+          disclaimer: 'Not financial advice. Signals reflect on-chain behavior patterns, not guaranteed outcomes.',
+        },
+      });
+    } catch (err) {
+      console.error('Signals error:', err);
+      res.status(500).json({ error: 'Failed to generate signals', detail: err.message });
+    }
+  });
+
   // Update the root endpoint to include Prescience routes
   const originalRoot = app._router?.stack?.find(
     l => l.route?.path === '/' && l.route?.methods?.get
@@ -742,6 +932,7 @@ export function registerPrescienceRoutes(app) {
         'GET /prescience/market/:marketId — Insider analysis for a specific market (conditionId or slug)',
         'GET /prescience/pulse — Overall market health + suspicious activity summary',
         'GET /prescience/scanner — Live scan of active markets for whale/insider activity',
+        'GET /prescience/signals — Smart money copy-trade signals (?min_confidence=60&limit=10)',
       ],
       scoring: {
         range: '0-100',

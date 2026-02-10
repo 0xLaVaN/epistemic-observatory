@@ -366,6 +366,7 @@ function NavBar({ active, onChange }) {
     { id: 'leaderboard', label: 'LEADERBOARD', icon: '◆' },
     { id: 'alerts', label: 'ALERTS', icon: '⚡' },
     { id: 'lookup', label: 'WALLET SCAN', icon: '⬡' },
+    { id: 'scanner', label: 'SCANNER', icon: '⊛' },
     { id: 'markets', label: 'MARKETS', icon: '◇' },
   ];
   
@@ -1085,6 +1086,210 @@ function ScoreDistribution({ wallets }) {
   );
 }
 
+// ─── SCANNER SECTION ───────────────────────────────────────────────
+function ScannerSection() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/prescience/scanner?limit=20`);
+        const json = await res.json();
+        setData(json);
+      } catch (e) {
+        console.error('Scanner fetch error:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+    const iv = setInterval(load, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
+  if (loading && !data) {
+    return (
+      <div className="text-center py-20">
+        <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }} className="inline-block mb-4">
+          <span className="text-3xl text-[#ff3366]">⊛</span>
+        </motion.div>
+        <div className="text-[11px] text-white/30 tracking-widest">SCANNING ACTIVE MARKETS...</div>
+      </div>
+    );
+  }
+
+  const results = data?.scanner || [];
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xs font-black tracking-[0.15em] text-white/50 flex items-center gap-2">
+          <span className="text-[#ff3366]">⊛</span>
+          LIVE MARKET SCANNER — WHALE & INSIDER DETECTION
+        </h2>
+        <span className="text-[9px] text-white/20">
+          {results.length} markets · {data?.meta?.timestamp ? new Date(data.meta.timestamp).toLocaleTimeString() : ''}
+        </span>
+      </div>
+
+      {results.length === 0 ? (
+        <div className="text-center py-20 text-white/30 text-sm">No active markets with sufficient data.</div>
+      ) : (
+        <div className="space-y-3">
+          {results.map((r, i) => {
+            const isExpanded = expanded === i;
+            const color = r.suspicion >= 60 ? '#ff3366' : r.suspicion >= 30 ? '#f0a000' : '#00f0ff';
+            const prices = r.market?.currentPrices || {};
+            const priceEntries = Object.entries(prices);
+
+            return (
+              <div key={r.market?.conditionId || i}>
+                <motion.button
+                  onClick={() => setExpanded(isExpanded ? null : i)}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.03 }}
+                  className={`w-full text-left rounded-xl border transition-all overflow-hidden ${
+                    isExpanded ? 'bg-white/[0.04] border-white/10' : 'bg-white/[0.02] border-white/5 hover:bg-white/[0.03]'
+                  }`}
+                >
+                  {/* Suspicion indicator */}
+                  <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l-xl" style={{ backgroundColor: color, boxShadow: `0 0 8px ${color}60` }} />
+                  
+                  <div className="flex items-center gap-4 p-4 pl-5">
+                    <ScoreGauge score={r.suspicion} size={56} />
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[11px] text-white/70 truncate">{r.market?.question}</span>
+                        <RiskBadge level={r.riskLevel} />
+                      </div>
+                      <div className="flex gap-4 text-[9px] text-white/30">
+                        {r.signals?.whale_consensus?.whale_count > 0 && (
+                          <span>🐋 {r.signals.whale_consensus.whale_count} whales → <span style={{ color }}>{r.signals.whale_consensus.dominant_outcome}</span> ({Math.round(r.signals.whale_consensus.strength * 100)}%)</span>
+                        )}
+                        {r.signals?.fresh_wallet_surge?.count > 0 && (
+                          <span>🆕 {r.signals.fresh_wallet_surge.count} fresh wallets ({r.signals.fresh_wallet_surge.pct_of_total}%)</span>
+                        )}
+                        {r.signals?.flow_imbalance?.direction !== 'NEUTRAL' && (
+                          <span>📊 Flow: {r.signals.flow_imbalance.direction} ({Math.round(r.signals.flow_imbalance.magnitude * 100)}%)</span>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="flex-shrink-0 text-right">
+                      {priceEntries.length > 0 && (
+                        <div className="flex gap-2">
+                          {priceEntries.map(([outcome, price]) => (
+                            <div key={outcome} className="text-center">
+                              <div className="text-[9px] text-white/30 truncate max-w-[60px]">{outcome}</div>
+                              <div className="text-sm font-black" style={{ color: price > 0.7 ? '#00ff88' : price < 0.3 ? '#ff3366' : '#f0a000' }}>
+                                {Math.round(price * 100)}¢
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="text-[8px] text-white/20 mt-1">
+                        24h: ${Math.round(r.market?.volume24hr || 0).toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                </motion.button>
+
+                <AnimatePresence>
+                  {isExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-5 py-4 border-x border-b border-white/5 rounded-b-xl bg-white/[0.01]">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          {/* Signal breakdown */}
+                          <div>
+                            <h4 className="text-[9px] text-white/30 tracking-widest mb-3">SIGNALS</h4>
+                            <div className="space-y-3">
+                              <div>
+                                <div className="flex justify-between text-[9px] mb-1">
+                                  <span className="text-white/40">Whale Consensus</span>
+                                  <span style={{ color }}>{Math.round((r.signals?.whale_consensus?.strength || 0) * 100)}%</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                  <div className="h-full rounded-full" style={{ width: `${(r.signals?.whale_consensus?.strength || 0) * 100}%`, backgroundColor: color }} />
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex justify-between text-[9px] mb-1">
+                                  <span className="text-white/40">Fresh Wallet Surge</span>
+                                  <span style={{ color }}>{r.signals?.fresh_wallet_surge?.pct_of_total || 0}%</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, (r.signals?.fresh_wallet_surge?.pct_of_total || 0))}%`, backgroundColor: color }} />
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex justify-between text-[9px] mb-1">
+                                  <span className="text-white/40">Flow Imbalance</span>
+                                  <span style={{ color }}>{r.signals?.flow_imbalance?.direction} {Math.round((r.signals?.flow_imbalance?.magnitude || 0) * 100)}%</span>
+                                </div>
+                                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, (r.signals?.flow_imbalance?.magnitude || 0) * 100)}%`, backgroundColor: color }} />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 text-[9px] text-white/20">
+                              {r.signals?.total_wallets} wallets · {r.signals?.total_trades} trades
+                            </div>
+                          </div>
+
+                          {/* Top whales */}
+                          <div className="md:col-span-2">
+                            <h4 className="text-[9px] text-white/30 tracking-widest mb-3">TOP WHALES</h4>
+                            {r.top_whales && r.top_whales.length > 0 ? (
+                              <div className="space-y-1.5">
+                                {r.top_whales.map((w, wi) => (
+                                  <div key={w.address + wi} className="flex items-center gap-3 p-2 rounded bg-white/[0.02] text-[10px]">
+                                    <span className="text-white/20 w-4">#{wi + 1}</span>
+                                    <span className="font-mono text-white/50 flex-1">{w.address?.slice(0, 10)}...{w.address?.slice(-6)}</span>
+                                    <span className={`font-bold ${w.bias === 'BUY' ? 'text-[#00ff88]' : 'text-[#ff3366]'}`}>{w.bias}</span>
+                                    <span className="text-white/40">{w.dominant_outcome}</span>
+                                    <span className="text-white/30">${Math.round(w.volume_usd).toLocaleString()}</span>
+                                    <span className="text-white/20">{w.trades}t</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-white/20">No significant whales detected</div>
+                            )}
+                            
+                            <div className="mt-3 flex gap-2">
+                              <div className="text-[9px] text-white/15">
+                                Liquidity: ${Math.round(r.market?.liquidity || 0).toLocaleString()} ·
+                                Total Vol: ${Math.round(r.market?.volumeTotal || 0).toLocaleString()}
+                                {r.market?.endDate && ` · Ends: ${new Date(r.market.endDate).toLocaleDateString()}`}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN DASHBOARD ────────────────────────────────────────────────
 export default function PrescienceDashboard() {
   const [view, setView] = useState('pulse');
@@ -1163,6 +1368,7 @@ export default function PrescienceDashboard() {
             {view === 'leaderboard' && <LeaderboardSection leaderboard={leaderboard} />}
             {view === 'alerts' && <AlertsSection alerts={alerts} />}
             {view === 'lookup' && <WalletLookupSection />}
+            {view === 'scanner' && <ScannerSection />}
             {view === 'markets' && <MarketsSection hotMarkets={hotMarkets} activeMarkets={activeMarkets} />}
           </motion.div>
         </AnimatePresence>
