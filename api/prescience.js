@@ -558,6 +558,171 @@ export function registerPrescienceRoutes(app) {
     }
   });
 
+  // --- GET /prescience/scanner ---
+  // Live scan of ACTIVE markets for suspicious whale activity
+  app.get('/prescience/scanner', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit) || 15, 30);
+      const minVolume = parseFloat(req.query.min_volume) || 0;
+      const activeMarkets = await getActiveMarkets(limit);
+
+      const results = [];
+
+      for (const market of activeMarkets) {
+        if (minVolume && (market.volumeNum || 0) < minVolume) continue;
+        try {
+          const trades = await getMarketTrades(market.conditionId, 300);
+          if (!trades || trades.length < 5) continue;
+
+          // Analyze trade flow
+          const wallets = {};
+          let buyVolume = 0, sellVolume = 0;
+          let recentBuyVolume = 0, recentSellVolume = 0;
+          const now = Date.now() / 1000;
+          const oneHourAgo = now - 3600;
+          const oneDayAgo = now - 86400;
+
+          for (const t of trades) {
+            const w = t.proxyWallet?.toLowerCase();
+            if (!w) continue;
+            if (!wallets[w]) wallets[w] = { buys: 0, sells: 0, volume: 0, trades: 0, firstSeen: t.timestamp, lastSeen: t.timestamp, outcomes: {} };
+            const entry = wallets[w];
+            const size = (t.size || 0) * (t.price || 0);
+            entry.volume += size;
+            entry.trades++;
+            if (t.timestamp < entry.firstSeen) entry.firstSeen = t.timestamp;
+            if (t.timestamp > entry.lastSeen) entry.lastSeen = t.timestamp;
+
+            if (t.side === 'BUY') {
+              entry.buys += size;
+              buyVolume += size;
+              if (t.timestamp >= oneDayAgo) recentBuyVolume += size;
+            } else {
+              entry.sells += size;
+              sellVolume += size;
+              if (t.timestamp >= oneDayAgo) recentSellVolume += size;
+            }
+
+            const outcome = t.outcome || 'unknown';
+            entry.outcomes[outcome] = (entry.outcomes[outcome] || 0) + size;
+          }
+
+          // Detect whales (top 5% by volume)
+          const walletList = Object.entries(wallets).map(([addr, data]) => ({ address: addr, ...data }));
+          walletList.sort((a, b) => b.volume - a.volume);
+
+          const whaleThreshold = walletList.length > 0 ? walletList[Math.max(0, Math.floor(walletList.length * 0.05))].volume : 0;
+          const whales = walletList.filter(w => w.volume >= whaleThreshold && w.volume > 100);
+
+          // Whale consensus — are whales aligned on an outcome?
+          const whaleOutcomeVolume = {};
+          for (const whale of whales) {
+            for (const [outcome, vol] of Object.entries(whale.outcomes)) {
+              whaleOutcomeVolume[outcome] = (whaleOutcomeVolume[outcome] || 0) + vol;
+            }
+          }
+          const totalWhaleVol = Object.values(whaleOutcomeVolume).reduce((a, b) => a + b, 0);
+          let dominantOutcome = null;
+          let consensusStrength = 0;
+          for (const [outcome, vol] of Object.entries(whaleOutcomeVolume)) {
+            const pct = totalWhaleVol > 0 ? vol / totalWhaleVol : 0;
+            if (pct > consensusStrength) {
+              consensusStrength = pct;
+              dominantOutcome = outcome;
+            }
+          }
+
+          // Fresh wallet surge — new wallets trading this market recently
+          const freshWallets = walletList.filter(w => {
+            const ageDays = (now - w.firstSeen) / 86400;
+            return ageDays < 7 && w.volume > 50;
+          });
+
+          // Flow imbalance
+          const totalFlow = recentBuyVolume + recentSellVolume;
+          const flowImbalance = totalFlow > 0 ? (recentBuyVolume - recentSellVolume) / totalFlow : 0;
+
+          // Composite suspicion score for the MARKET
+          const whaleConcentration = whales.length > 0 && walletList.length > 0 ? whales.length / walletList.length : 0;
+          const freshSurge = freshWallets.length / Math.max(1, walletList.length);
+
+          const marketSuspicion = Math.round(Math.min(100,
+            (consensusStrength > 0.75 ? 30 : consensusStrength > 0.6 ? 15 : 0) +
+            (freshSurge > 0.3 ? 25 : freshSurge > 0.15 ? 12 : 0) +
+            (Math.abs(flowImbalance) > 0.6 ? 25 : Math.abs(flowImbalance) > 0.3 ? 12 : 0) +
+            (whales.some(w => w.volume > 5000) ? 20 : whales.some(w => w.volume > 1000) ? 10 : 0)
+          ));
+
+          // Parse current prices
+          let currentPrices = {};
+          try {
+            const outcomes = JSON.parse(market.outcomes || '[]');
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            outcomes.forEach((o, i) => { currentPrices[o] = parseFloat(prices[i]); });
+          } catch {}
+
+          results.push({
+            market: {
+              question: market.question,
+              conditionId: market.conditionId,
+              slug: market.slug,
+              volume24hr: market.volume24hr,
+              volumeTotal: market.volumeNum,
+              liquidity: market.liquidityNum,
+              endDate: market.endDate,
+              currentPrices,
+            },
+            suspicion: marketSuspicion,
+            riskLevel: marketSuspicion >= 60 ? 'HIGH' : marketSuspicion >= 30 ? 'MEDIUM' : 'LOW',
+            signals: {
+              whale_consensus: {
+                dominant_outcome: dominantOutcome,
+                strength: Math.round(consensusStrength * 100) / 100,
+                whale_count: whales.length,
+              },
+              fresh_wallet_surge: {
+                count: freshWallets.length,
+                pct_of_total: Math.round(freshSurge * 10000) / 100,
+              },
+              flow_imbalance: {
+                direction: flowImbalance > 0.1 ? 'BUY' : flowImbalance < -0.1 ? 'SELL' : 'NEUTRAL',
+                magnitude: Math.round(Math.abs(flowImbalance) * 100) / 100,
+                recent_buy_usd: Math.round(recentBuyVolume * 100) / 100,
+                recent_sell_usd: Math.round(recentSellVolume * 100) / 100,
+              },
+              total_wallets: walletList.length,
+              total_trades: trades.length,
+            },
+            top_whales: whales.slice(0, 5).map(w => ({
+              address: w.address,
+              volume_usd: Math.round(w.volume * 100) / 100,
+              trades: w.trades,
+              bias: w.buys > w.sells ? 'BUY' : 'SELL',
+              dominant_outcome: Object.entries(w.outcomes).sort((a, b) => b[1] - a[1])[0]?.[0],
+            })),
+          });
+        } catch (err) {
+          // skip market on error
+        }
+      }
+
+      results.sort((a, b) => b.suspicion - a.suspicion);
+
+      res.json({
+        scanner: results,
+        meta: {
+          markets_scanned: results.length,
+          timestamp: new Date().toISOString(),
+          engine: 'Prescience Scanner v1.0',
+          description: 'Live scan of active Polymarket markets for whale clustering, fresh wallet surges, and flow imbalances.',
+        },
+      });
+    } catch (err) {
+      console.error('Scanner error:', err);
+      res.status(500).json({ error: 'Scanner failed', detail: err.message });
+    }
+  });
+
   // Update the root endpoint to include Prescience routes
   const originalRoot = app._router?.stack?.find(
     l => l.route?.path === '/' && l.route?.methods?.get
@@ -576,6 +741,7 @@ export function registerPrescienceRoutes(app) {
         'GET /prescience/alerts — Recent high-score activity alerts',
         'GET /prescience/market/:marketId — Insider analysis for a specific market (conditionId or slug)',
         'GET /prescience/pulse — Overall market health + suspicious activity summary',
+        'GET /prescience/scanner — Live scan of active markets for whale/insider activity',
       ],
       scoring: {
         range: '0-100',
