@@ -449,7 +449,8 @@ export function registerPrescienceRoutes(app) {
       let marketInfo = null;
       try {
         const markets = await fetchJSON(`${GAMMA_API}/markets?condition_id=${marketId}&limit=1`);
-        if (markets.length > 0) marketInfo = markets[0];
+        // Only use result if conditionId actually matches (Gamma does fuzzy matching)
+        if (markets.length > 0 && markets[0].conditionId === marketId) marketInfo = markets[0];
       } catch {}
 
       if (!marketInfo) {
@@ -465,8 +466,9 @@ export function registerPrescienceRoutes(app) {
       if (!trades || trades.length === 0) {
         return res.json({
           marketId,
-          market: marketInfo ? { question: marketInfo.question, volume: marketInfo.volumeNum } : null,
-          message: 'No trades found for this market',
+          market: marketInfo ? { question: marketInfo.question, slug: marketInfo.slug, volume: marketInfo.volumeNum, conditionId: marketInfo.conditionId } : null,
+          analysis: { total_trades: 0, unique_wallets: 0, total_volume_usd: 0, suspicious_wallets: 0, insider_risk: 'LOW' },
+          message: 'No trades found for this market — it may have recently closed or have low activity',
           wallets: [],
         });
       }
