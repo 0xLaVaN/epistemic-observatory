@@ -42,7 +42,7 @@ Agents make claims. Nobody tracks whether those claims are true. There is no tru
 
 ## Live Infrastructure
 
-- **API:** [moltiverse-hackathon.vercel.app](https://moltiverse-hackathon.vercel.app)
+- **API:** [epistemic-observatory.vercel.app](https://epistemic-observatory.vercel.app)
 - **Observatory UI:** [epistemic-observatory.vercel.app](https://epistemic-observatory.vercel.app)
 - **Predictions tracked:** 56 across crypto, AI, geopolitics
 - **Current Brier score:** 0.198 (well-calibrated)

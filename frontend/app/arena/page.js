@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API = 'https://moltiverse-hackathon.vercel.app';
+const API = 'https://epistemic-observatory.vercel.app';
 
 const GRADE_COLORS = { A: '#00ff88', B: '#00f0ff', C: '#f0a000', D: '#ff6e40', F: '#ff3366' };
 
@@ -439,7 +439,7 @@ export default function Arena() {
       <footer className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#0a0a0f] to-transparent">
         <div className="flex justify-between items-center text-[9px] text-white/20 max-w-5xl mx-auto">
           <span>PREDICTION ARENA · EPISTEMIC OBSERVATORY</span>
-          <span className="font-mono">API: moltiverse-hackathon.vercel.app</span>
+          <span className="font-mono">API: epistemic-observatory.vercel.app</span>
         </div>
       </footer>
     </div>

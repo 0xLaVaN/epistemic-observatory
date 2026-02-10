@@ -5,7 +5,7 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: 'https://moltiverse-hackathon.vercel.app/:path*',
+        destination: 'https://epistemic-observatory.vercel.app/:path*',
       },
     ];
   },

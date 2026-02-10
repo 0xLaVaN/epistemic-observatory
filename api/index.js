@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createHash } from 'crypto';
+import { dashboardHTML } from './dashboard.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1187,7 +1188,7 @@ function generateBadgeSVG(agent, trustScore, calibration, opts = {}) {
   <text x="200" y="130" font-family="monospace" font-size="12" fill="${fg}" font-weight="bold">${resolved}/${total}</text>
   
   <!-- Footer -->
-  <text x="304" y="150" font-family="monospace" font-size="8" fill="${muted}" text-anchor="end">moltiverse-hackathon.vercel.app</text>
+  <text x="304" y="150" font-family="monospace" font-size="8" fill="${muted}" text-anchor="end">epistemic-observatory.vercel.app</text>
 </svg>`;
 }
 
