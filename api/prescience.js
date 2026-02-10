@@ -1087,6 +1087,135 @@ export function registerPrescienceRoutes(app) {
     }
   });
 
+  // --- GET /prescience/rings --- Coordination Ring Detector
+  // Finds wallet clusters that trade the same side of markets within tight time windows.
+  // Game theory: detects coordination games in on-chain data.
+  app.get('/prescience/rings', async (req, res) => {
+    try {
+      const windowSec = parseInt(req.query.window) || 300; // 5 min default
+      const minCoTrades = parseInt(req.query.min_co_trades) || 3;
+      const limit = Math.min(parseInt(req.query.limit) || 10, 25);
+
+      const resolvedMarkets = await getResolvedMarkets(20);
+      const activeMarkets = await getActiveMarkets(15);
+      const allMarkets = [...resolvedMarkets.slice(0, 10), ...activeMarkets.slice(0, 10)];
+
+      // Collect trades per market, build co-occurrence matrix
+      const pairScores = {}; // "addr1|addr2" → { coTrades, markets, sameSide, details }
+
+      for (const market of allMarkets) {
+        try {
+          const trades = await getMarketTrades(market.conditionId, 500);
+          if (!trades || trades.length < 5) continue;
+
+          // Group by outcome side
+          const sideBuckets = {}; // outcome → [{wallet, timestamp, size}]
+          for (const t of trades) {
+            if (t.side !== 'BUY') continue;
+            const w = (t.proxyWallet || t.maker || '').toLowerCase();
+            if (!w) continue;
+            const ts = t.timestamp ? new Date(t.timestamp).getTime() / 1000 : (t.blockTimestamp || 0);
+            const outcome = t.outcome || 'unknown';
+            if (!sideBuckets[outcome]) sideBuckets[outcome] = [];
+            sideBuckets[outcome].push({ wallet: w, ts, size: (t.size || 0) * (t.price || 0) });
+          }
+
+          // For each side, find wallets trading within windowSec of each other
+          for (const [outcome, entries] of Object.entries(sideBuckets)) {
+            entries.sort((a, b) => a.ts - b.ts);
+            for (let i = 0; i < entries.length; i++) {
+              for (let j = i + 1; j < entries.length; j++) {
+                if (entries[j].ts - entries[i].ts > windowSec) break;
+                const a = entries[i].wallet;
+                const b = entries[j].wallet;
+                if (a === b) continue;
+                const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+                if (!pairScores[key]) pairScores[key] = { coTrades: 0, sameSide: 0, markets: new Set(), totalVol: 0 };
+                pairScores[key].coTrades++;
+                pairScores[key].sameSide++;
+                pairScores[key].markets.add(market.conditionId);
+                pairScores[key].totalVol += entries[i].size + entries[j].size;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // Filter and rank coordination pairs
+      const rings = Object.entries(pairScores)
+        .filter(([, v]) => v.coTrades >= minCoTrades && v.markets.size >= 2)
+        .map(([key, v]) => {
+          const [w1, w2] = key.split('|');
+          const coordination_score = Math.min(100, Math.round(
+            (v.sameSide / v.coTrades) * 40 +       // Same-side ratio (max 40)
+            Math.min(v.markets.size, 5) * 8 +       // Cross-market spread (max 40)
+            Math.min(v.coTrades, 10) * 2             // Frequency (max 20)
+          ));
+          return {
+            wallets: [w1, w2],
+            coordination_score,
+            co_trades: v.coTrades,
+            same_side_ratio: Math.round(v.sameSide / v.coTrades * 100),
+            markets_shared: v.markets.size,
+            combined_volume_usd: Math.round(v.totalVol * 100) / 100,
+            risk_level: coordination_score >= 80 ? 'CRITICAL' : coordination_score >= 60 ? 'HIGH' : coordination_score >= 40 ? 'MODERATE' : 'LOW',
+          };
+        })
+        .sort((a, b) => b.coordination_score - a.coordination_score)
+        .slice(0, limit);
+
+      // Build clusters (connected components of high-scoring pairs)
+      const clusters = [];
+      const visited = new Set();
+      for (const ring of rings.filter(r => r.coordination_score >= 60)) {
+        const [w1, w2] = ring.wallets;
+        if (visited.has(w1) && visited.has(w2)) continue;
+        // BFS to find cluster
+        const cluster = new Set([w1, w2]);
+        const queue = [w1, w2];
+        while (queue.length > 0) {
+          const current = queue.shift();
+          visited.add(current);
+          for (const r of rings) {
+            if (r.wallets.includes(current)) {
+              const other = r.wallets.find(w => w !== current);
+              if (!cluster.has(other) && r.coordination_score >= 50) {
+                cluster.add(other);
+                queue.push(other);
+              }
+            }
+          }
+        }
+        if (cluster.size >= 2) {
+          clusters.push({
+            size: cluster.size,
+            wallets: [...cluster],
+            max_coordination_score: Math.max(...rings.filter(r => r.wallets.some(w => cluster.has(w))).map(r => r.coordination_score)),
+          });
+        }
+      }
+
+      res.json({
+        rings: rings,
+        clusters: clusters.sort((a, b) => b.max_coordination_score - a.max_coordination_score).slice(0, 5),
+        meta: {
+          window_seconds: windowSec,
+          min_co_trades: minCoTrades,
+          markets_analyzed: allMarkets.length,
+          total_pairs_found: Object.keys(pairScores).length,
+          timestamp: new Date().toISOString(),
+          engine: 'Prescience Rings v1.0',
+          description: 'Coordination Ring Detector — finds wallet clusters trading the same side within tight time windows across multiple markets. Based on game-theoretic coordination game detection.',
+          methodology: 'For each market, groups same-side trades within a configurable time window. Pairs appearing across multiple markets with consistent same-side timing are flagged as potential coordination rings.',
+          game_theory: 'Coordination games require correlated strategies. Wallets repeatedly choosing the same action (outcome) within short windows across many markets cannot be explained by independent decision-making alone.',
+        },
+      });
+    } catch (err) {
+      console.error('Rings error:', err);
+      res.status(500).json({ error: 'Failed to detect coordination rings', detail: err.message });
+    }
+  });
+
   // Update the root endpoint to include Prescience routes
   const originalRoot = app._router?.stack?.find(
     l => l.route?.path === '/' && l.route?.methods?.get
@@ -1107,6 +1236,7 @@ export function registerPrescienceRoutes(app) {
         'GET /prescience/pulse — Overall market health + suspicious activity summary',
         'GET /prescience/scanner — Live scan of active markets for whale/insider activity',
         'GET /prescience/signals — Smart money copy-trade signals (?min_confidence=60&limit=10)',
+        'GET /prescience/rings — Coordination ring detector (?window=300&min_co_trades=3&limit=10)',
       ],
       scoring: {
         range: '0-100',

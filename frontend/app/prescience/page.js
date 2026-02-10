@@ -1014,6 +1014,7 @@ function CTABanner() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [tab, setTab] = useState('agent'); // 'agent' | 'human'
 
   useEffect(() => {
     if (typeof window !== 'undefined' && localStorage.getItem('prescience_cta_dismissed')) {
@@ -1025,11 +1026,10 @@ function CTABanner() {
     e.preventDefault();
     if (!email.trim()) return;
     try {
-      // Store interest via API
       await fetch(`${API_BASE}/prescience/interest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), source: 'prescience-cta', timestamp: new Date().toISOString() }),
+        body: JSON.stringify({ email: email.trim(), source: `prescience-cta-${tab}`, timestamp: new Date().toISOString() }),
       }).catch(() => {});
       setSubmitted(true);
       localStorage.setItem('prescience_cta_submitted', 'true');
@@ -1043,6 +1043,17 @@ function CTABanner() {
 
   if (dismissed) return null;
 
+  const codeSnippet = `// Before any Polymarket trade:
+const scan = await fetch(
+  '${API_BASE}/prescience/' + walletAddress
+);
+const { score, archetype, riskLevel } = await scan.json();
+
+if (score > 70 && archetype === 'insider') {
+  // Smart money detected — follow or fade
+  console.log('Insider signal:', riskLevel);
+}`;
+
   return (
     <div className="fixed bottom-12 left-0 right-0 z-50 px-4">
       <motion.div
@@ -1053,26 +1064,69 @@ function CTABanner() {
       >
         <div className="relative bg-gradient-to-r from-[#ff3366]/10 via-[#0a0a0f] to-[#ff3366]/10 border border-[#ff3366]/20 rounded-xl p-4 backdrop-blur-xl">
           <button onClick={dismiss} className="absolute top-2 right-3 text-white/20 hover:text-white/50 text-xs">✕</button>
+          
+          {/* Tab switcher */}
+          <div className="flex gap-2 mb-3 justify-center">
+            <button 
+              onClick={() => setTab('agent')} 
+              className={`text-[9px] font-black tracking-widest px-3 py-1 rounded-md transition-colors ${tab === 'agent' ? 'bg-[#ff3366]/20 text-[#ff3366] border border-[#ff3366]/30' : 'text-white/30 hover:text-white/50'}`}
+            >
+              🤖 FOR AGENTS
+            </button>
+            <button 
+              onClick={() => setTab('human')} 
+              className={`text-[9px] font-black tracking-widest px-3 py-1 rounded-md transition-colors ${tab === 'human' ? 'bg-[#ff3366]/20 text-[#ff3366] border border-[#ff3366]/30' : 'text-white/30 hover:text-white/50'}`}
+            >
+              👤 FOR HUMANS
+            </button>
+          </div>
+
           {!submitted ? (
-            <div className="flex flex-col sm:flex-row items-center gap-3">
-              <div className="flex-1 text-center sm:text-left">
-                <div className="text-xs font-black tracking-widest text-[#ff3366]">EARLY ACCESS</div>
-                <div className="text-[10px] text-white/40 mt-0.5">Get Prescience alerts + API key. Free during beta.</div>
+            tab === 'agent' ? (
+              <div className="space-y-3">
+                <div className="text-center">
+                  <div className="text-xs font-black tracking-widest text-[#ff3366]">PLUG INTO YOUR TRADING BOT</div>
+                  <div className="text-[10px] text-white/40 mt-0.5">One API call before every trade. No auth needed. Free during beta.</div>
+                </div>
+                <pre className="bg-black/60 border border-white/5 rounded-lg p-3 text-[9px] text-[#00ff88]/80 font-mono overflow-x-auto leading-relaxed">
+                  {codeSnippet}
+                </pre>
+                <div className="flex flex-wrap justify-center gap-2 text-[8px] text-white/25 tracking-wider">
+                  <span className="bg-white/5 px-2 py-0.5 rounded">GET /prescience/:address</span>
+                  <span className="bg-white/5 px-2 py-0.5 rounded">GET /prescience/signals</span>
+                  <span className="bg-white/5 px-2 py-0.5 rounded">GET /prescience/scanner</span>
+                  <span className="bg-white/5 px-2 py-0.5 rounded">GET /prescience/alerts</span>
+                </div>
+                <div className="flex gap-2 justify-center">
+                  <a href={`${API_BASE}/prescience`} target="_blank" rel="noopener noreferrer" className="bg-[#ff3366] hover:bg-[#ff3366]/80 text-white text-[10px] font-black tracking-wider px-4 py-2 rounded-lg transition-colors">
+                    API DOCS →
+                  </a>
+                  <a href="https://github.com/0xLaVaN/epistemic-observatory" target="_blank" rel="noopener noreferrer" className="bg-white/5 hover:bg-white/10 text-white/60 text-[10px] font-black tracking-wider px-4 py-2 rounded-lg transition-colors border border-white/10">
+                    GITHUB
+                  </a>
+                </div>
               </div>
-              <form onSubmit={handleSubmit} className="flex gap-2 w-full sm:w-auto">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  placeholder="you@email.com"
-                  required
-                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80 placeholder:text-white/15 focus:outline-none focus:border-[#ff3366]/30 flex-1 sm:w-48"
-                />
-                <button type="submit" className="bg-[#ff3366] hover:bg-[#ff3366]/80 text-white text-xs font-black tracking-wider px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-                  GET ACCESS
-                </button>
-              </form>
-            </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-center gap-3">
+                <div className="flex-1 text-center sm:text-left">
+                  <div className="text-xs font-black tracking-widest text-[#ff3366]">EARLY ACCESS</div>
+                  <div className="text-[10px] text-white/40 mt-0.5">Get Prescience alerts + API key. Free during beta.</div>
+                </div>
+                <form onSubmit={handleSubmit} className="flex gap-2 w-full sm:w-auto">
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder="you@email.com"
+                    required
+                    className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80 placeholder:text-white/15 focus:outline-none focus:border-[#ff3366]/30 flex-1 sm:w-48"
+                  />
+                  <button type="submit" className="bg-[#ff3366] hover:bg-[#ff3366]/80 text-white text-xs font-black tracking-wider px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+                    GET ACCESS
+                  </button>
+                </form>
+              </div>
+            )
           ) : (
             <div className="text-center py-1">
               <div className="text-xs font-black text-[#00ff88] tracking-widest">YOU'RE IN</div>
@@ -1556,7 +1610,7 @@ export default function PrescienceDashboard() {
       {/* Footer */}
       <footer className="fixed bottom-0 left-0 right-0 z-40 p-3 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0fcc] to-transparent">
         <div className="flex justify-between items-center text-[9px] text-white/15 max-w-7xl mx-auto">
-          <div className="tracking-wider">PRESCIENCE v1.0 · EPISTEMIC OBSERVATORY</div>
+          <div className="tracking-wider">PRESCIENCE v2.0 · EPISTEMIC OBSERVATORY</div>
           <div className="flex gap-4 items-center">
             <span className="font-mono">See who sees first.</span>
             <span className="flex items-center gap-1">
