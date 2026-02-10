@@ -367,6 +367,7 @@ function NavBar({ active, onChange }) {
     { id: 'alerts', label: 'ALERTS', icon: '⚡' },
     { id: 'lookup', label: 'WALLET SCAN', icon: '⬡' },
     { id: 'scanner', label: 'SCANNER', icon: '⊛' },
+    { id: 'signals', label: 'SIGNALS', icon: '◎', href: '/prescience/signals' },
     { id: 'markets', label: 'MARKETS', icon: '◇' },
   ];
   
@@ -387,7 +388,16 @@ function NavBar({ active, onChange }) {
           
           {/* Tabs */}
           <div className="flex items-center gap-1">
-            {tabs.map(tab => (
+            {tabs.map(tab => tab.href ? (
+              <a
+                key={tab.id}
+                href={tab.href}
+                className="relative text-[10px] px-3 py-2 rounded transition-all tracking-wider font-bold text-green-400/70 hover:text-green-400 hover:bg-green-500/10"
+              >
+                <span className="mr-1">{tab.icon}</span>
+                <span className="hidden md:inline">{tab.label}</span>
+              </a>
+            ) : (
               <button
                 key={tab.id}
                 onClick={() => onChange(tab.id)}
