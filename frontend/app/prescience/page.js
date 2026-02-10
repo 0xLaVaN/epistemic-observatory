@@ -1009,6 +1009,82 @@ function WalletLookupSection() {
   );
 }
 
+// ─── CTA BANNER ────────────────────────────────────────────────────
+function CTABanner() {
+  const [email, setEmail] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('prescience_cta_dismissed')) {
+      setDismissed(true);
+    }
+  }, []);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    try {
+      // Store interest via API
+      await fetch(`${API_BASE}/prescience/interest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), source: 'prescience-cta', timestamp: new Date().toISOString() }),
+      }).catch(() => {});
+      setSubmitted(true);
+      localStorage.setItem('prescience_cta_submitted', 'true');
+    } catch {}
+  };
+
+  const dismiss = () => {
+    setDismissed(true);
+    localStorage.setItem('prescience_cta_dismissed', 'true');
+  };
+
+  if (dismissed) return null;
+
+  return (
+    <div className="fixed bottom-12 left-0 right-0 z-50 px-4">
+      <motion.div
+        initial={{ y: 100, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: 3, duration: 0.5 }}
+        className="max-w-2xl mx-auto"
+      >
+        <div className="relative bg-gradient-to-r from-[#ff3366]/10 via-[#0a0a0f] to-[#ff3366]/10 border border-[#ff3366]/20 rounded-xl p-4 backdrop-blur-xl">
+          <button onClick={dismiss} className="absolute top-2 right-3 text-white/20 hover:text-white/50 text-xs">✕</button>
+          {!submitted ? (
+            <div className="flex flex-col sm:flex-row items-center gap-3">
+              <div className="flex-1 text-center sm:text-left">
+                <div className="text-xs font-black tracking-widest text-[#ff3366]">EARLY ACCESS</div>
+                <div className="text-[10px] text-white/40 mt-0.5">Get Prescience alerts + API key. Free during beta.</div>
+              </div>
+              <form onSubmit={handleSubmit} className="flex gap-2 w-full sm:w-auto">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@email.com"
+                  required
+                  className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80 placeholder:text-white/15 focus:outline-none focus:border-[#ff3366]/30 flex-1 sm:w-48"
+                />
+                <button type="submit" className="bg-[#ff3366] hover:bg-[#ff3366]/80 text-white text-xs font-black tracking-wider px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+                  GET ACCESS
+                </button>
+              </form>
+            </div>
+          ) : (
+            <div className="text-center py-1">
+              <div className="text-xs font-black text-[#00ff88] tracking-widest">YOU'RE IN</div>
+              <div className="text-[10px] text-white/40 mt-0.5">We'll send your API key shortly. See who sees first.</div>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // ─── MARKETS SECTION ───────────────────────────────────────────────
 function MarketsSection({ hotMarkets, activeMarkets }) {
   const [selectedMarket, setSelectedMarket] = useState(null);
@@ -1473,6 +1549,9 @@ export default function PrescienceDashboard() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      {/* CTA Banner */}
+      <CTABanner />
 
       {/* Footer */}
       <footer className="fixed bottom-0 left-0 right-0 z-40 p-3 bg-gradient-to-t from-[#0a0a0f] via-[#0a0a0fcc] to-transparent">

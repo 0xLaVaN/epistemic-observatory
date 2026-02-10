@@ -947,4 +947,22 @@ export function registerPrescienceRoutes(app) {
       data_source: 'Polymarket (Gamma API + Data API)',
     });
   });
+
+  // --- POST /prescience/interest --- (email capture for early access)
+  const interestList = [];
+  app.post('/prescience/interest', (req, res) => {
+    const { email, source, timestamp } = req.body || {};
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid email required' });
+    }
+    interestList.push({ email, source: source || 'unknown', timestamp: timestamp || new Date().toISOString() });
+    // Log to console so we can see signups in Vercel logs
+    console.log(`[PRESCIENCE INTEREST] ${email} via ${source} at ${timestamp}`);
+    res.json({ ok: true, message: 'You\'re on the list. We\'ll send your API key shortly.' });
+  });
+
+  // --- GET /prescience/interest/count --- (public counter)
+  app.get('/prescience/interest/count', (req, res) => {
+    res.json({ count: interestList.length });
+  });
 }
