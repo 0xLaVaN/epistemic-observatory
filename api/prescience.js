@@ -16,6 +16,8 @@ const DATA_API = 'https://data-api.polymarket.com';
 // Cache TTLs (ms)
 const CACHE_TTL = 5 * 60 * 1000;  // 5 min for most queries
 const MARKET_CACHE_TTL = 15 * 60 * 1000; // 15 min for market lists
+const WATCHLIST_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours for watchlist
+const CLUSTER_CACHE_TTL = 5 * 60 * 1000; // 5 min for cluster scans
 
 // In-memory cache
 const cache = new Map();
@@ -407,6 +409,260 @@ function computePrescienceScore(trades, markets = []) {
 }
 
 // ============================================
+// SMART WALLET WATCHLIST
+// ============================================
+
+/**
+ * Build a watchlist of "smart money" wallets from resolved markets.
+ * Criteria: win rate >60% across 5+ resolved markets.
+ * Returns top 500 wallets sorted by win rate * sqrt(markets).
+ */
+async function buildSmartWatchlist() {
+  return cached('smart_watchlist', WATCHLIST_CACHE_TTL, async () => {
+    const resolvedMarkets = await getResolvedMarkets(100);
+    
+    // Build winning outcomes per market
+    const winningOutcomes = {};
+    for (const m of resolvedMarkets) {
+      if (!m.conditionId || !m.outcomePrices) continue;
+      try {
+        const prices = JSON.parse(m.outcomePrices);
+        const outcomes = JSON.parse(m.outcomes || '[]');
+        const winIdx = prices.findIndex(p => parseFloat(p) === 1);
+        if (winIdx !== -1) winningOutcomes[m.conditionId] = outcomes[winIdx];
+      } catch {}
+    }
+
+    // Collect trades from resolved markets and compute per-wallet stats
+    const walletStats = {}; // address → { wins, losses, markets: Set, totalVolume }
+    const batchSize = Math.min(resolvedMarkets.length, 30);
+    
+    for (let i = 0; i < batchSize; i++) {
+      const market = resolvedMarkets[i];
+      const winOutcome = winningOutcomes[market.conditionId];
+      if (!winOutcome) continue;
+      
+      try {
+        const trades = await getMarketTrades(market.conditionId, 500);
+        for (const t of trades) {
+          if (t.side !== 'BUY') continue;
+          const w = (t.proxyWallet || '').toLowerCase();
+          if (!w) continue;
+          
+          if (!walletStats[w]) walletStats[w] = { wins: 0, losses: 0, markets: new Set(), totalVolume: 0 };
+          const s = walletStats[w];
+          s.markets.add(market.conditionId);
+          const vol = (t.size || 0) * (t.price || 0);
+          s.totalVolume += vol;
+          
+          if (t.outcome === winOutcome) s.wins++;
+          else s.losses++;
+        }
+      } catch {}
+    }
+
+    // Filter: win rate >60%, 5+ resolved markets
+    const qualified = [];
+    for (const [address, s] of Object.entries(walletStats)) {
+      const total = s.wins + s.losses;
+      if (total < 5) continue;
+      const winRate = s.wins / total;
+      if (winRate <= 0.6) continue;
+      qualified.push({
+        address,
+        win_rate: Math.round(winRate * 1000) / 1000,
+        wins: s.wins,
+        losses: s.losses,
+        total_bets: total,
+        markets_traded: s.markets.size,
+        total_volume_usd: Math.round(s.totalVolume * 100) / 100,
+        // Score for ranking: win rate weighted by sample size
+        _rank_score: winRate * Math.sqrt(total),
+      });
+    }
+
+    qualified.sort((a, b) => b._rank_score - a._rank_score);
+    const top500 = qualified.slice(0, 500);
+    // Clean up internal field
+    for (const w of top500) delete w._rank_score;
+    
+    return {
+      wallets: top500,
+      built_at: new Date().toISOString(),
+      markets_analyzed: batchSize,
+      total_wallets_scanned: Object.keys(walletStats).length,
+    };
+  });
+}
+
+// ============================================
+// CLUSTER DETECTION ENGINE
+// ============================================
+
+/**
+ * Detect temporal clusters: N+ smart wallets entering the same side
+ * of the same market within a configurable time window.
+ */
+async function detectClusters(options = {}) {
+  const {
+    minWallets = 3,
+    minConviction = 0,
+    windowHours = 2,
+    lookbackHours = 24,
+  } = options;
+
+  const cacheKey = `clusters_${minWallets}_${minConviction}_${windowHours}_${lookbackHours}`;
+  
+  return cached(cacheKey, CLUSTER_CACHE_TTL, async () => {
+    const watchlistData = await buildSmartWatchlist();
+    const smartAddresses = new Set(watchlistData.wallets.map(w => w.address));
+    const smartLookup = {};
+    for (const w of watchlistData.wallets) smartLookup[w.address] = w;
+
+    const activeMarkets = await getActiveMarkets(30);
+    const windowMs = windowHours * 3600 * 1000;
+    const cutoff = Date.now() - lookbackHours * 3600 * 1000;
+    const clusters = [];
+
+    for (const market of activeMarkets) {
+      try {
+        const trades = await getMarketTrades(market.conditionId, 500);
+        if (!trades || trades.length < 3) continue;
+
+        // Parse current prices
+        let currentPrices = {};
+        try {
+          const outcomes = JSON.parse(market.outcomes || '[]');
+          const prices = JSON.parse(market.outcomePrices || '[]');
+          outcomes.forEach((o, i) => { currentPrices[o] = parseFloat(prices[i]); });
+        } catch {}
+
+        // Filter to smart wallet BUY trades within lookback
+        const smartTrades = trades.filter(t => {
+          if (t.side !== 'BUY') return false;
+          const w = (t.proxyWallet || '').toLowerCase();
+          if (!smartAddresses.has(w)) return false;
+          const ts = t.timestamp ? (typeof t.timestamp === 'number' ? t.timestamp * 1000 : new Date(t.timestamp).getTime()) : 0;
+          return ts >= cutoff;
+        }).map(t => ({
+          address: (t.proxyWallet || '').toLowerCase(),
+          outcome: t.outcome || 'unknown',
+          volume_usd: (t.size || 0) * (t.price || 0),
+          timestamp: t.timestamp ? (typeof t.timestamp === 'number' ? t.timestamp * 1000 : new Date(t.timestamp).getTime()) : 0,
+          price: t.price || 0,
+        }));
+
+        if (smartTrades.length < minWallets) continue;
+
+        // Group by outcome side
+        const bySide = {};
+        for (const t of smartTrades) {
+          if (!bySide[t.outcome]) bySide[t.outcome] = [];
+          bySide[t.outcome].push(t);
+        }
+
+        // For each side, find temporal clusters using sliding window
+        for (const [outcome, sideTrades] of Object.entries(bySide)) {
+          // Dedupe by wallet (keep latest trade per wallet)
+          const byWallet = {};
+          for (const t of sideTrades) {
+            if (!byWallet[t.address] || t.timestamp > byWallet[t.address].timestamp) {
+              byWallet[t.address] = t;
+            }
+          }
+          const uniqueTrades = Object.values(byWallet);
+          if (uniqueTrades.length < minWallets) continue;
+
+          uniqueTrades.sort((a, b) => a.timestamp - b.timestamp);
+
+          // Sliding window to find best cluster
+          let bestCluster = null;
+          let bestScore = 0;
+
+          for (let i = 0; i < uniqueTrades.length; i++) {
+            const windowEnd = uniqueTrades[i].timestamp + windowMs;
+            const inWindow = uniqueTrades.filter(t => t.timestamp >= uniqueTrades[i].timestamp && t.timestamp <= windowEnd);
+            if (inWindow.length < minWallets) continue;
+
+            const walletCount = inWindow.length;
+            const totalVolume = inWindow.reduce((s, t) => s + t.volume_usd, 0);
+            const avgWinRate = inWindow.reduce((s, t) => s + (smartLookup[t.address]?.win_rate || 0.6), 0) / walletCount;
+            const firstTs = inWindow[0].timestamp;
+            const lastTs = inWindow[inWindow.length - 1].timestamp;
+            const spreadMin = (lastTs - firstTs) / 60000;
+
+            // Timing tightness: 0-1, higher = tighter
+            const tightness = windowMs > 0 ? 1 - (spreadMin / (windowHours * 60)) : 1;
+
+            // Conviction score: composite 0-100
+            const conviction = Math.round(Math.min(100,
+              Math.min(30, walletCount * 6) +                    // wallet count (max 30)
+              Math.min(25, (totalVolume / 5000) * 25) +          // volume (max 25 at $5k+)
+              (avgWinRate - 0.5) * 60 +                          // win rate bonus (max 30 at 100%)
+              tightness * 15                                      // tightness bonus (max 15)
+            ));
+
+            if (conviction > bestScore) {
+              bestScore = conviction;
+              bestCluster = { inWindow, walletCount, totalVolume, avgWinRate, firstTs, lastTs, spreadMin, tightness, conviction };
+            }
+          }
+
+          if (!bestCluster || bestCluster.conviction < minConviction) continue;
+
+          const currentPrice = currentPrices[outcome] || 0.5;
+          const smartImplied = Math.min(0.95, bestCluster.avgWinRate); // smart money implied probability
+
+          clusters.push({
+            market: {
+              question: market.question,
+              conditionId: market.conditionId,
+              slug: market.slug,
+              currentPrices,
+            },
+            signal: {
+              direction: outcome,
+              conviction: bestCluster.conviction,
+              strength: bestCluster.conviction >= 80 ? 'STRONG' : bestCluster.conviction >= 60 ? 'MODERATE' : 'EMERGING',
+              wallet_count: bestCluster.walletCount,
+              total_volume_usd: Math.round(bestCluster.totalVolume * 100) / 100,
+              avg_win_rate: Math.round(bestCluster.avgWinRate * 1000) / 1000,
+              first_trade: new Date(bestCluster.firstTs).toISOString(),
+              last_trade: new Date(bestCluster.lastTs).toISOString(),
+              window_minutes: Math.round(bestCluster.spreadMin),
+            },
+            wallets: bestCluster.inWindow.map(t => ({
+              address: t.address,
+              volume_usd: Math.round(t.volume_usd * 100) / 100,
+              win_rate: smartLookup[t.address]?.win_rate || 0,
+              trade_time: new Date(t.timestamp).toISOString(),
+            })),
+            edge: {
+              current_price: currentPrice,
+              smart_money_implied: Math.round(smartImplied * 100) / 100,
+              edge_pct: Math.round((smartImplied - currentPrice) * 100),
+            },
+          });
+        }
+      } catch {}
+    }
+
+    clusters.sort((a, b) => b.signal.conviction - a.signal.conviction);
+
+    return {
+      clusters,
+      meta: {
+        watchlist_size: watchlistData.wallets.length,
+        markets_scanned: activeMarkets.length,
+        timestamp: new Date().toISOString(),
+        engine: 'Prescience v2.0 — Cluster Detection',
+        parameters: { min_wallets: minWallets, min_conviction: minConviction, window_hours: windowHours, lookback_hours: lookbackHours },
+      },
+    };
+  });
+}
+
+// ============================================
 // API ROUTES
 // ============================================
 
@@ -460,6 +716,51 @@ export function registerPrescienceRoutes(app) {
     } catch (err) {
       console.error('Leaderboard error:', err);
       res.status(500).json({ error: 'Failed to generate leaderboard', detail: err.message });
+    }
+  });
+
+  // --- GET /prescience/watchlist ---
+  app.get('/prescience/watchlist', async (req, res) => {
+    try {
+      const watchlistData = await buildSmartWatchlist();
+      const limit = Math.min(parseInt(req.query.limit) || 500, 500);
+      res.json({
+        watchlist: watchlistData.wallets.slice(0, limit),
+        meta: {
+          total: watchlistData.wallets.length,
+          built_at: watchlistData.built_at,
+          markets_analyzed: watchlistData.markets_analyzed,
+          total_wallets_scanned: watchlistData.total_wallets_scanned,
+          criteria: 'Win rate >60% across 5+ resolved markets',
+          cache_ttl_hours: 6,
+          engine: 'Prescience v2.0 — Smart Watchlist',
+        },
+      });
+    } catch (err) {
+      console.error('Watchlist error:', err);
+      res.status(500).json({ error: 'Failed to build watchlist', detail: err.message });
+    }
+  });
+
+  // --- GET /prescience/clusters ---
+  app.get('/prescience/clusters', async (req, res) => {
+    try {
+      const minWallets = parseInt(req.query.min_wallets) || 3;
+      const minConviction = parseInt(req.query.min_conviction) || 0;
+      const hours = parseInt(req.query.hours) || 24;
+      const windowHours = parseFloat(req.query.window_hours) || 2;
+
+      const result = await detectClusters({
+        minWallets,
+        minConviction,
+        windowHours,
+        lookbackHours: hours,
+      });
+
+      res.json(result);
+    } catch (err) {
+      console.error('Clusters error:', err);
+      res.status(500).json({ error: 'Failed to detect clusters', detail: err.message });
     }
   });
 
@@ -1067,6 +1368,27 @@ export function registerPrescienceRoutes(app) {
         } catch {}
       }
 
+      // Incorporate cluster data: boost signals that have active clusters
+      try {
+        const clusterData = await detectClusters({ minWallets: 3, minConviction: 30, windowHours: 2, lookbackHours: 24 });
+        for (const signal of signals) {
+          const matchingCluster = clusterData.clusters.find(
+            c => c.market.conditionId === signal.market.conditionId && c.signal.direction === signal.signal.direction
+          );
+          if (matchingCluster) {
+            const clusterBoost = Math.round(matchingCluster.signal.conviction * 0.15); // up to +15 points
+            signal.signal.confidence = Math.min(100, signal.signal.confidence + clusterBoost);
+            signal.signal.strength = signal.signal.confidence >= 85 ? 'STRONG' : signal.signal.confidence >= 70 ? 'MODERATE' : 'SPECULATIVE';
+            signal.cluster = {
+              active: true,
+              conviction: matchingCluster.signal.conviction,
+              wallet_count: matchingCluster.signal.wallet_count,
+              boost_applied: clusterBoost,
+            };
+          }
+        }
+      } catch {}
+
       signals.sort((a, b) => b.signal.confidence - a.signal.confidence);
 
       res.json({
@@ -1075,7 +1397,7 @@ export function registerPrescienceRoutes(app) {
           total_signals: signals.length,
           min_confidence: minConfidence,
           timestamp: new Date().toISOString(),
-          engine: 'Prescience Signals v2.0',
+          engine: 'Prescience Signals v2.1 — Cluster-Enhanced',
           description: 'Copy-trade signals derived from smart money positioning on active Polymarket markets.',
           methodology: 'Wallets are scored by historical win rate on resolved markets. High-volume, high-win-rate wallets form the "smart money" cohort. Their consensus positioning generates directional signals.',
           disclaimer: 'Not financial advice. Signals reflect on-chain behavior patterns, not guaranteed outcomes.',
@@ -1235,8 +1557,10 @@ export function registerPrescienceRoutes(app) {
         'GET /prescience/market/:marketId — Insider analysis for a specific market (conditionId or slug)',
         'GET /prescience/pulse — Overall market health + suspicious activity summary',
         'GET /prescience/scanner — Live scan of active markets for whale/insider activity',
-        'GET /prescience/signals — Smart money copy-trade signals (?min_confidence=60&limit=10)',
+        'GET /prescience/signals — Smart money copy-trade signals, now cluster-enhanced (?min_confidence=60&limit=10)',
         'GET /prescience/rings — Coordination ring detector (?window=300&min_co_trades=3&limit=10)',
+        'GET /prescience/watchlist — Top 500 smart wallets by win rate (?limit=500). 6hr cache.',
+        'GET /prescience/clusters — Temporal cluster detection: smart wallets converging on same position (?min_wallets=3&min_conviction=60&hours=24&window_hours=2)',
       ],
       scoring: {
         range: '0-100',
