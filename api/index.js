@@ -5,8 +5,13 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { createHash } from 'crypto';
 import { dashboardHTML } from './dashboard.js';
-import { registerSolanaRoutes } from './solana-attestation.js';
 import { registerPrescienceRoutes } from './prescience.js';
+
+let registerSolanaRoutes = () => {};
+try {
+  const solana = await import('./solana-attestation.js');
+  registerSolanaRoutes = solana.registerSolanaRoutes;
+} catch(e) { console.warn('Solana routes unavailable:', e.message); }
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
