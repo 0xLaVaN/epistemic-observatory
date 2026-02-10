@@ -346,6 +346,47 @@ function BreakdownBar({ label, score, detail, weight }) {
   );
 }
 
+// ─── COPY BUTTON ───────────────────────────────────────────────────
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <button onClick={copy} title="Copy address" className={`text-[10px] px-1 transition-colors ${copied ? 'text-[#00ff88]' : 'text-white/20 hover:text-white/50'}`}>
+      {copied ? '✓' : '⧉'}
+    </button>
+  );
+}
+
+// ─── EXTERNAL LINK ─────────────────────────────────────────────────
+function ExtLink({ href, children, className = '' }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-0.5 ${className}`} onClick={e => e.stopPropagation()}>
+      {children}
+      <svg width="8" height="8" viewBox="0 0 12 12" fill="currentColor" opacity="0.4"><path d="M3.5 1.5v1h4.793L1.146 9.646l.708.708L9 3.207V8h1V1.5z"/></svg>
+    </a>
+  );
+}
+
+// ─── WATCH LIST ────────────────────────────────────────────────────
+function useWatchList() {
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    try { setList(JSON.parse(localStorage.getItem('prescience_watchlist') || '[]')); } catch {}
+  }, []);
+  const toggle = (addr) => {
+    const next = list.includes(addr) ? list.filter(a => a !== addr) : [...list, addr];
+    setList(next);
+    localStorage.setItem('prescience_watchlist', JSON.stringify(next));
+  };
+  return { list, toggle, has: (a) => list.includes(a) };
+}
+
 // ─── RISK BADGE ────────────────────────────────────────────────────
 function RiskBadge({ level }) {
   const color = RISK_COLORS[level] || '#888';
@@ -508,7 +549,15 @@ function ActiveMarketRow({ market }) {
 
 // ─── PULSE SECTION ─────────────────────────────────────────────────
 function PulseSection({ pulse, hotMarkets, activeMarkets, setView }) {
-  if (!pulse) return <div className="text-center text-white/30 py-20">Loading pulse data...</div>;
+  if (!pulse) return (
+    <div className="space-y-6 animate-pulse">
+      <div className="h-64 rounded-2xl bg-white/[0.02] border border-white/5" />
+      <div className="grid grid-cols-2 gap-4">
+        <div className="h-20 rounded-lg bg-white/[0.02]" />
+        <div className="h-20 rounded-lg bg-white/[0.02]" />
+      </div>
+    </div>
+  );
   
   const maxSus = Math.max(...(hotMarkets || []).map(m => m.suspicious_wallets), 1);
   
@@ -633,8 +682,9 @@ function LeaderboardSection({ leaderboard }) {
                 <div className="col-span-1 text-[10px] text-white/30 font-mono">
                   {String(i + 1).padStart(2, '0')}
                 </div>
-                <div className="col-span-3 text-[11px] font-mono text-white/60">
-                  {short}
+                <div className="col-span-3 text-[11px] font-mono text-white/60 flex items-center gap-1">
+                  <ExtLink href={`https://polymarket.com/profile/${addr}`} className="text-white/60 hover:text-[#00f0ff] transition-colors">{short}</ExtLink>
+                  <CopyButton text={addr} />
                 </div>
                 <div className="col-span-1 text-center">
                   <span className="text-sm font-black" style={{ color: scoreColor, textShadow: `0 0 10px ${scoreColor}40` }}>
@@ -751,9 +801,23 @@ function AlertsSection({ alerts }) {
           <span className="text-[#ff3366]">⚡</span>
           INSIDER ACTIVITY ALERTS
         </h2>
-        <span className="text-[9px] text-white/20">
-          {alerts.length} alerts · Updated {lastUpdate.toLocaleTimeString()}
-        </span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              const blob = new Blob([JSON.stringify(alerts, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = `prescience-alerts-${new Date().toISOString().slice(0,10)}.json`;
+              a.click(); URL.revokeObjectURL(url);
+            }}
+            className="text-[9px] text-white/20 hover:text-[#00f0ff] transition-colors border border-white/5 px-2 py-1 rounded"
+          >
+            ↓ EXPORT JSON
+          </button>
+          <span className="text-[9px] text-white/20">
+            {alerts.length} alerts · Updated {lastUpdate.toLocaleTimeString()}
+          </span>
+        </div>
       </div>
       
       <div className="space-y-2">
@@ -775,9 +839,10 @@ function AlertsSection({ alerts }) {
                 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[11px] font-mono text-white/70">
+                    <ExtLink href={`https://polymarket.com/profile/${alert.address}`} className="text-[11px] font-mono text-white/70 hover:text-[#00f0ff] transition-colors">
                       {alert.address?.slice(0, 8)}...{alert.address?.slice(-6)}
-                    </span>
+                    </ExtLink>
+                    <CopyButton text={alert.address} />
                     <RiskBadge level={alert.riskLevel} />
                   </div>
                   <div className="text-[10px] text-white/40 truncate">
@@ -874,9 +939,10 @@ function WalletLookupSection() {
               <ScoreGauge score={result.score} size={120} />
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
-                  <span className="text-sm font-mono text-white/60">
+                  <ExtLink href={`https://polymarket.com/profile/${result.address || address}`} className="text-sm font-mono text-white/60 hover:text-[#00f0ff] transition-colors">
                     {result.address || address}
-                  </span>
+                  </ExtLink>
+                  <CopyButton text={result.address || address} />
                   <RiskBadge level={result.riskLevel} />
                 </div>
                 <div className="text-[10px] text-white/30 space-y-1">
@@ -1037,7 +1103,8 @@ function MarketsSection({ hotMarkets, activeMarkets }) {
                     return (
                       <div key={w.address + i} className="flex items-center gap-3 p-2 rounded bg-white/[0.02]">
                         <span className="text-sm font-black w-8 text-center" style={{ color: scoreColor }}>{w.score}</span>
-                        <span className="text-[10px] font-mono text-white/50 flex-1">{w.address?.slice(0, 10)}...{w.address?.slice(-6)}</span>
+                        <ExtLink href={`https://polymarket.com/profile/${w.address}`} className="text-[10px] font-mono text-white/50 hover:text-[#00f0ff] flex-1 transition-colors">{w.address?.slice(0, 10)}...{w.address?.slice(-6)}</ExtLink>
+                        <CopyButton text={w.address} />
                         <RiskBadge level={w.riskLevel} />
                         <span className="text-[9px] text-white/30">{w.trades || w.tradeCount || 0} trades</span>
                         <span className="text-[9px] text-white/30">${Math.round(w.totalUSD || 0).toLocaleString()}</span>
@@ -1111,7 +1178,7 @@ function ScannerSection() {
         const json = await res.json();
         setData(json);
       } catch (e) {
-        console.error('Scanner fetch error:', e);
+        // scanner fetch error — silently degrade
       } finally {
         setLoading(false);
       }
@@ -1267,7 +1334,8 @@ function ScannerSection() {
                                 {r.top_whales.map((w, wi) => (
                                   <div key={w.address + wi} className="flex items-center gap-3 p-2 rounded bg-white/[0.02] text-[10px]">
                                     <span className="text-white/20 w-4">#{wi + 1}</span>
-                                    <span className="font-mono text-white/50 flex-1">{w.address?.slice(0, 10)}...{w.address?.slice(-6)}</span>
+                                    <ExtLink href={`https://polymarket.com/profile/${w.address}`} className="font-mono text-white/50 hover:text-[#00f0ff] flex-1 transition-colors">{w.address?.slice(0, 10)}...{w.address?.slice(-6)}</ExtLink>
+                                    <CopyButton text={w.address} />
                                     <span className={`font-bold ${w.bias === 'BUY' ? 'text-[#00ff88]' : 'text-[#ff3366]'}`}>{w.bias}</span>
                                     <span className="text-white/40">{w.dominant_outcome}</span>
                                     <span className="text-white/30">${Math.round(w.volume_usd).toLocaleString()}</span>
@@ -1327,7 +1395,7 @@ export default function PrescienceDashboard() {
       if (leaderRes?.leaderboard) setLeaderboard(leaderRes.leaderboard);
       if (alertRes?.alerts) setAlerts(alertRes.alerts);
     } catch (e) {
-      console.error('Fetch error:', e);
+      // fetch error — silently degrade
     } finally {
       setLoading(false);
     }

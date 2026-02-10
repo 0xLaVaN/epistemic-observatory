@@ -150,9 +150,9 @@ function MarketCard({ data, index }) {
               <div className="space-y-1">
                 {data.top_whales.map((w, i) => (
                   <div key={i} className="flex items-center gap-2 text-xs">
-                    <span className="font-mono text-gray-500">
+                    <a href={`https://polymarket.com/profile/${w.address}`} target="_blank" rel="noopener" className="font-mono text-gray-500 hover:text-cyan-400 transition-colors">
                       {w.address.slice(0, 6)}...{w.address.slice(-4)}
-                    </span>
+                    </a>
                     <span className="text-gray-400">${w.volume_usd.toLocaleString()}</span>
                     <span className={w.bias === 'BUY' ? 'text-green-400' : 'text-red-400'}>
                       {w.bias}
@@ -285,8 +285,8 @@ export default function ScannerPage() {
         {loading && !data && (
           <div className="flex items-center justify-center py-20">
             <div className="text-center">
-              <div className="text-cyan-400 text-lg mb-2">Scanning markets...</div>
-              <div className="text-gray-500 text-sm">Analyzing whale activity across active Polymarket markets</div>
+              <div className="w-12 h-12 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin mx-auto mb-4" />
+              <div className="text-gray-500 text-sm">Scanning whale activity across active Polymarket markets...</div>
             </div>
           </div>
         )}

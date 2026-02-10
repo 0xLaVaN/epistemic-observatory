@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_BASE = 'https://epistemic-observatory.vercel.app';
@@ -11,6 +11,46 @@ const RISK_COLORS = {
   MEDIUM: '#ffab40',
   LOW: '#00f0ff',
 };
+
+// ─── EXTERNAL LINK ICON ────────────────────────────────────────────
+function ExtLink({ href, children, className = '' }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={`inline-flex items-center gap-1 hover:underline ${className}`}>
+      {children}
+      <svg width="10" height="10" viewBox="0 0 12 12" fill="currentColor" opacity="0.5"><path d="M3.5 1.5v1h4.793L1.146 9.646l.708.708L9 3.207V8h1V1.5z"/></svg>
+    </a>
+  );
+}
+
+// ─── COPY BUTTON ───────────────────────────────────────────────────
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const copy = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button onClick={copy} title="Copy address" style={{ cursor: 'pointer', background: 'none', border: 'none', color: copied ? '#00ff88' : '#555', fontSize: 12, padding: '2px 4px' }}>
+      {copied ? '✓' : '⧉'}
+    </button>
+  );
+}
+
+// ─── WATCH LIST (localStorage) ─────────────────────────────────────
+function useWatchList() {
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    try { setList(JSON.parse(localStorage.getItem('prescience_watchlist') || '[]')); } catch {}
+  }, []);
+  const toggle = (addr) => {
+    const next = list.includes(addr) ? list.filter(a => a !== addr) : [...list, addr];
+    setList(next);
+    localStorage.setItem('prescience_watchlist', JSON.stringify(next));
+  };
+  return { list, toggle, has: (a) => list.includes(a) };
+}
 
 function ScoreGauge({ score, riskLevel }) {
   const color = RISK_COLORS[riskLevel] || '#00f0ff';
@@ -48,6 +88,29 @@ function ScoreGauge({ score, riskLevel }) {
   );
 }
 
+// ─── ALERT THRESHOLD INDICATOR ─────────────────────────────────────
+function ThresholdBadge({ score }) {
+  if (score >= 90) return <span style={{ background: '#ff004422', border: '1px solid #ff0044', color: '#ff0044', fontSize: 9, padding: '2px 6px', borderRadius: 4, letterSpacing: 1, fontWeight: 700 }}>⚠ EXTREME</span>;
+  if (score >= 80) return <span style={{ background: '#ff336622', border: '1px solid #ff3366', color: '#ff3366', fontSize: 9, padding: '2px 6px', borderRadius: 4, letterSpacing: 1, fontWeight: 700 }}>HIGH ALERT</span>;
+  if (score >= 70) return <span style={{ background: '#ffab4022', border: '1px solid #ffab40', color: '#ffab40', fontSize: 9, padding: '2px 6px', borderRadius: 4, letterSpacing: 1, fontWeight: 700 }}>ELEVATED</span>;
+  return null;
+}
+
+// ─── SIGNAL STRENGTH INDICATOR ─────────────────────────────────────
+function TopSignal({ breakdown }) {
+  if (!breakdown) return null;
+  const signals = Object.entries(breakdown).map(([key, val]) => ({ key, score: val.score, weight: val.weight }));
+  signals.sort((a, b) => (b.score * b.weight) - (a.score * a.weight));
+  const top = signals[0];
+  if (!top) return null;
+  const label = top.key.replace(/_/g, ' ');
+  return (
+    <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+      Top signal: <span style={{ color: '#00f0ff', fontWeight: 600 }}>{label}</span> ({top.score}/100 × {Math.round(top.weight * 100)}%)
+    </div>
+  );
+}
+
 function BreakdownBar({ label, score, detail, weight }) {
   return (
     <div style={{ marginBottom: 14 }}>
@@ -71,17 +134,54 @@ function BreakdownBar({ label, score, detail, weight }) {
   );
 }
 
+// ─── SKELETON LOADING ──────────────────────────────────────────────
+function Skeleton({ width = '100%', height = 16 }) {
+  return (
+    <div style={{ width, height, background: 'linear-gradient(90deg, #1a1a2e 25%, #222240 50%, #1a1a2e 75%)', backgroundSize: '200% 100%', borderRadius: 4, animation: 'shimmer 1.5s infinite' }}>
+      <style>{`@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
+    </div>
+  );
+}
+
 export default function WalletPage() {
   const [address, setAddress] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const watchList = useWatchList();
+
+  // Read address from URL params on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const addr = params.get('address');
+    if (addr) {
+      setAddress(addr);
+      // Auto-scan
+      (async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const res = await fetch(`${API_BASE}/prescience/${addr.trim()}`);
+          if (!res.ok) throw new Error(`API ${res.status}`);
+          setData(await res.json());
+        } catch (err) {
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+      })();
+    }
+  }, []);
 
   const lookup = async (e) => {
     e?.preventDefault();
     if (!address.trim()) return;
     setLoading(true);
     setError(null);
+    // Update URL for shareability
+    const url = new URL(window.location);
+    url.searchParams.set('address', address.trim());
+    window.history.replaceState({}, '', url);
     try {
       const res = await fetch(`${API_BASE}/prescience/${address.trim()}`);
       if (!res.ok) throw new Error(`API ${res.status}`);
@@ -93,6 +193,7 @@ export default function WalletPage() {
     }
   };
 
+  const shareUrl = data?.address ? `${window.location.origin}/prescience/wallet?address=${data.address}` : null;
   const bd = data?.breakdown;
 
   return (
@@ -107,6 +208,22 @@ export default function WalletPage() {
             Enter a Polymarket wallet address to compute its insider probability score.
           </p>
         </motion.div>
+
+        {/* Watch List Quick Access */}
+        {watchList.list.length > 0 && (
+          <div style={{ marginTop: 16, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 10, color: '#555', letterSpacing: 1, textTransform: 'uppercase' }}>Watched:</span>
+            {watchList.list.map(addr => (
+              <button
+                key={addr}
+                onClick={() => { setAddress(addr); }}
+                style={{ background: '#0a0a1a', border: '1px solid #222', color: '#00f0ff', padding: '4px 8px', borderRadius: 6, fontSize: 10, fontFamily: 'monospace', cursor: 'pointer' }}
+              >
+                {addr.slice(0, 6)}...{addr.slice(-4)}
+              </button>
+            ))}
+          </div>
+        )}
 
         <form onSubmit={lookup} style={{ display: 'flex', gap: 8, marginTop: 24, marginBottom: 32 }}>
           <input
@@ -144,7 +261,18 @@ export default function WalletPage() {
 
         {error && (
           <div style={{ background: '#1a0000', border: '1px solid #ff3366', borderRadius: 8, padding: 16, color: '#ff3366', fontSize: 13 }}>
-            {error}
+            ⚠ {error}. Please check the address and try again.
+          </div>
+        )}
+
+        {/* Loading skeleton */}
+        {loading && !data && (
+          <div style={{ padding: 32 }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}><Skeleton width={180} height={180} /></div>
+            <Skeleton width="60%" height={12} />
+            <div style={{ marginTop: 12 }}><Skeleton height={8} /></div>
+            <div style={{ marginTop: 12 }}><Skeleton height={8} /></div>
+            <div style={{ marginTop: 12 }}><Skeleton height={8} /></div>
           </div>
         )}
 
@@ -154,12 +282,46 @@ export default function WalletPage() {
               {/* Score */}
               <div style={{ background: '#0a0a1a', border: '1px solid #1a1a2e', borderRadius: 12, padding: 32, marginBottom: 24, textAlign: 'center' }}>
                 <ScoreGauge score={data.score} riskLevel={data.riskLevel} />
-                <div style={{ marginTop: 16, fontSize: 11, color: '#555' }}>
+                <div style={{ marginTop: 8, display: 'flex', justifyContent: 'center', gap: 8, alignItems: 'center' }}>
+                  <ThresholdBadge score={data.score} />
+                </div>
+                <div style={{ marginTop: 12, fontSize: 11, color: '#555' }}>
                   {data.tradeCount} trades analyzed · {data.confidence} confidence
                 </div>
-                <div style={{ fontSize: 11, color: '#333', fontFamily: 'monospace', marginTop: 8 }}>
+                <TopSignal breakdown={data.breakdown} />
+                <div style={{ fontSize: 11, color: '#333', fontFamily: 'monospace', marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                   {data.address}
+                  <CopyButton text={data.address} />
+                  <button
+                    onClick={() => watchList.toggle(data.address)}
+                    title={watchList.has(data.address) ? 'Remove from watch list' : 'Watch this wallet'}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: watchList.has(data.address) ? '#f0a000' : '#333' }}
+                  >
+                    {watchList.has(data.address) ? '★' : '☆'}
+                  </button>
                 </div>
+
+                {/* External links */}
+                <div style={{ marginTop: 12, display: 'flex', justifyContent: 'center', gap: 16 }}>
+                  <ExtLink href={`https://polygonscan.com/address/${data.address}`} className="" style={{ fontSize: 11, color: '#00f0ff88' }}>
+                    <span style={{ fontSize: 11, color: '#00f0ff88' }}>Polygonscan</span>
+                  </ExtLink>
+                  <ExtLink href={`https://polymarket.com/profile/${data.address}`}>
+                    <span style={{ fontSize: 11, color: '#00f0ff88' }}>Polymarket Profile</span>
+                  </ExtLink>
+                </div>
+
+                {/* Share button */}
+                {shareUrl && (
+                  <div style={{ marginTop: 12 }}>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(shareUrl); }}
+                      style={{ background: '#111', border: '1px solid #222', color: '#555', padding: '6px 12px', borderRadius: 6, fontSize: 10, cursor: 'pointer', letterSpacing: 1 }}
+                    >
+                      📋 COPY SHARE LINK
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Breakdown */}

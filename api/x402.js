@@ -51,7 +51,7 @@ function getClientIP(req) {
  * Classify a prescience route into a pricing tier
  */
 function classifyRoute(path) {
-  if (path === '/prescience' || path === '/prescience/pulse') return null; // free
+  if (path === '/prescience' || path === '/prescience/pulse' || path === '/prescience/pricing' || path === '/prescience/scanner' || path === '/prescience/signals') return null; // free
   if (path === '/prescience/alerts') return 'market_report';
   if (path === '/prescience/leaderboard') return 'market_report';
   if (path.startsWith('/prescience/market/')) return 'deep_analysis';
