@@ -92,85 +92,91 @@ async function getWalletPositions(address) {
 }
 
 // ============================================
-// PRESCIENCE SCORING ENGINE
+// PRESCIENCE v2 SCORING ENGINE
 // ============================================
 
 /**
- * Compute Prescience Score for a wallet.
- * 0-100 scale. Higher = more suspicious (insider-like behavior).
- * 
- * Signals:
- * - wallet_age: Fresh wallets score higher
- * - avg_bet_size: Bigger bets score higher
- * - timing_score: Bets close to resolution score higher
- * - win_rate: Higher win rate scores higher (especially on binary)
- * - market_concentration: Only trading a few markets scores higher
- * - withdrawal_speed: Fast profit-taking scores higher
+ * Classify wallet into archetype based on trading patterns.
+ * Returns: 'scalper' | 'insider' | 'whale' | 'retail'
  */
-function computePrescienceScore(trades, markets = []) {
-  if (!trades || trades.length === 0) {
-    return { score: 0, breakdown: {}, confidence: 'none', tradeCount: 0 };
-  }
+function classifyArchetype(trades, markets = []) {
+  const uniqueMarkets = new Set(trades.map(t => t.conditionId)).size;
+  const betSizes = trades.map(t => (t.size || 0) * (t.price || 0));
+  const totalVolume = betSizes.reduce((a, b) => a + b, 0);
+  const avgBetSize = betSizes.length > 0 ? totalVolume / betSizes.length : 0;
 
-  const now = Date.now() / 1000;
-
-  // --- wallet_age ---
-  const timestamps = trades.map(t => t.timestamp).sort();
-  const firstTrade = timestamps[0];
-  const walletAgeDays = (now - firstTrade) / 86400;
-  // Fresh wallet = high score. <7 days = 100, >180 days = 0
-  const walletAgeScore = Math.max(0, Math.min(100, 100 - (walletAgeDays / 180) * 100));
-
-  // --- avg_bet_size ---
-  const betSizes = trades.map(t => t.size * t.price);
-  const avgBetSize = betSizes.reduce((a, b) => a + b, 0) / betSizes.length;
-  // >$10K avg = 100, <$10 = 0
-  const avgBetScore = Math.min(100, (Math.log10(Math.max(1, avgBetSize)) / 4) * 100);
-
-  // --- timing_score ---
-  // How close to market resolution do they trade?
-  // Build market close times lookup
-  const marketCloseTimes = {};
+  // Build market duration map
+  const marketDurations = {};
   for (const m of markets) {
-    if (m.conditionId && m.closedTime) {
-      marketCloseTimes[m.conditionId] = new Date(m.closedTime).getTime() / 1000;
+    if (m.conditionId) {
+      const created = m.createdAt ? new Date(m.createdAt).getTime() : null;
+      const closed = m.closedTime ? new Date(m.closedTime).getTime() : null;
+      if (created && closed && closed > created) {
+        marketDurations[m.conditionId] = (closed - created) / 3600000; // hours
+      }
     }
   }
 
-  let timingScores = [];
-  for (const t of trades) {
-    const closeTime = marketCloseTimes[t.conditionId];
-    if (closeTime && t.timestamp < closeTime) {
-      const hoursBeforeClose = (closeTime - t.timestamp) / 3600;
-      // <1 hour = 100, >168 hours (1 week) = 0
-      timingScores.push(Math.max(0, Math.min(100, 100 - (hoursBeforeClose / 168) * 100)));
-    }
-  }
-  const timingScore = timingScores.length > 0
-    ? timingScores.reduce((a, b) => a + b, 0) / timingScores.length
-    : 50; // neutral if no data
+  // Compute win rate
+  const { wins, losses } = computeWinLoss(trades, markets);
+  const totalBets = wins + losses;
+  const winRate = totalBets > 0 ? wins / totalBets : 0.5;
 
-  // --- win_rate ---
-  // Group trades by conditionId, determine if they won
+  // Avg market duration for this wallet's trades
+  const durations = trades.map(t => marketDurations[t.conditionId]).filter(Boolean);
+  const avgDuration = durations.length > 0 ? durations.reduce((a, b) => a + b, 0) / durations.length : null;
+  const shortMarketPref = durations.length > 0 ? durations.filter(d => d < 24).length / durations.length : 0;
+
+  // Avg liquidity-relative size
+  const marketLiqMap = {};
+  for (const m of markets) {
+    if (m.conditionId && m.liquidityNum) marketLiqMap[m.conditionId] = parseFloat(m.liquidityNum) || 0;
+  }
+  const liqRelSizes = trades.map(t => {
+    const liq = marketLiqMap[t.conditionId];
+    if (!liq || liq === 0) return null;
+    return ((t.size || 0) * (t.price || 0)) / liq;
+  }).filter(Boolean);
+  const avgLiqRelSize = liqRelSizes.length > 0 ? liqRelSizes.reduce((a, b) => a + b, 0) / liqRelSizes.length : 0;
+
+  // Classification logic
+  if (uniqueMarkets > 10 && avgBetSize < 200 && shortMarketPref > 0.5 && winRate < 0.65) {
+    return 'scalper';
+  }
+  if (totalVolume >= 10000) {
+    return 'whale';
+  }
+  if (uniqueMarkets <= 5 && avgLiqRelSize > 0.02 && winRate > 0.7 && totalBets >= 2) {
+    return 'insider';
+  }
+  if (uniqueMarkets <= 8 && winRate > 0.65 && avgLiqRelSize > 0.01 && totalBets >= 2) {
+    return 'insider';
+  }
+  if (totalVolume >= 5000) {
+    return 'whale';
+  }
+  return 'retail';
+}
+
+/**
+ * Helper: compute wins/losses from trades + markets
+ */
+function computeWinLoss(trades, markets) {
   const tradesByMarket = {};
   for (const t of trades) {
     if (!tradesByMarket[t.conditionId]) tradesByMarket[t.conditionId] = [];
     tradesByMarket[t.conditionId].push(t);
   }
-
   let wins = 0, losses = 0;
   for (const [cid, mTrades] of Object.entries(tradesByMarket)) {
     const market = markets.find(m => m.conditionId === cid);
     if (!market || !market.outcomePrices) continue;
-    
     try {
       const prices = JSON.parse(market.outcomePrices);
       const outcomes = JSON.parse(market.outcomes || '[]');
       const winningIdx = prices.findIndex(p => parseFloat(p) === 1);
       if (winningIdx === -1) continue;
       const winningOutcome = outcomes[winningIdx];
-
-      // Did they buy the winning outcome?
       const buys = mTrades.filter(t => t.side === 'BUY');
       for (const buy of buys) {
         if (buy.outcome === winningOutcome) wins++;
@@ -178,60 +184,223 @@ function computePrescienceScore(trades, markets = []) {
       }
     } catch {}
   }
+  return { wins, losses };
+}
 
+/**
+ * Compute Prescience Score v2 for a wallet.
+ * 0-100 scale. Higher = more suspicious (insider-like behavior).
+ *
+ * v2 improvements:
+ * - Market duration normalization (short markets ≠ insider signal)
+ * - Archetype classification (scalper/insider/whale/retail)
+ * - Outcome-weighted timing (late + correct + long market = signal)
+ * - Topic/domain edge detection
+ * - Liquidity-relative sizing
+ */
+function computePrescienceScore(trades, markets = []) {
+  if (!trades || trades.length === 0) {
+    return { score: 0, breakdown: {}, confidence: 'none', tradeCount: 0, archetype: 'unknown' };
+  }
+
+  const now = Date.now() / 1000;
+
+  // --- Archetype classification ---
+  const archetype = classifyArchetype(trades, markets);
+
+  // --- Build lookups ---
+  const marketMap = {};
+  const marketCloseTimes = {};
+  const marketCreateTimes = {};
+  const marketLiqMap = {};
+  const marketTagMap = {};
+  for (const m of markets) {
+    if (m.conditionId) {
+      marketMap[m.conditionId] = m;
+      if (m.closedTime) marketCloseTimes[m.conditionId] = new Date(m.closedTime).getTime() / 1000;
+      if (m.createdAt) marketCreateTimes[m.conditionId] = new Date(m.createdAt).getTime() / 1000;
+      if (m.liquidityNum) marketLiqMap[m.conditionId] = parseFloat(m.liquidityNum) || 0;
+      marketTagMap[m.conditionId] = m.tags || m.category || null;
+    }
+  }
+
+  // --- Determine winning outcomes per market ---
+  const winningOutcomes = {};
+  for (const m of markets) {
+    if (!m.conditionId || !m.outcomePrices) continue;
+    try {
+      const prices = JSON.parse(m.outcomePrices);
+      const outcomes = JSON.parse(m.outcomes || '[]');
+      const winIdx = prices.findIndex(p => parseFloat(p) === 1);
+      if (winIdx !== -1) winningOutcomes[m.conditionId] = outcomes[winIdx];
+    } catch {}
+  }
+
+  // --- wallet_age ---
+  const timestamps = trades.map(t => t.timestamp).sort();
+  const firstTrade = timestamps[0];
+  const walletAgeDays = (now - firstTrade) / 86400;
+  const walletAgeScore = Math.max(0, Math.min(100, 100 - (walletAgeDays / 180) * 100));
+
+  // --- Liquidity-relative sizing ---
+  const liqRelSizes = [];
+  for (const t of trades) {
+    const liq = marketLiqMap[t.conditionId];
+    const size = (t.size || 0) * (t.price || 0);
+    if (liq && liq > 0) {
+      liqRelSizes.push(size / liq);
+    }
+  }
+  const avgLiqRelSize = liqRelSizes.length > 0 ? liqRelSizes.reduce((a, b) => a + b, 0) / liqRelSizes.length : 0;
+  // 5%+ of liquidity = 100, 0.01% = 0
+  const liquiditySizeScore = Math.max(0, Math.min(100, (avgLiqRelSize / 0.05) * 100));
+
+  // --- Duration-normalized, outcome-weighted timing ---
+  let timingScores = [];
+  for (const t of trades) {
+    const closeTime = marketCloseTimes[t.conditionId];
+    const createTime = marketCreateTimes[t.conditionId];
+    if (!closeTime || t.timestamp >= closeTime) continue;
+
+    const marketDurationHrs = createTime ? (closeTime - createTime) / 3600 : null;
+    const hoursBeforeClose = (closeTime - t.timestamp) / 3600;
+
+    // Duration normalization: ratio of "time remaining" to "total market life"
+    // Low ratio = bet placed very late relative to market duration
+    let normalizedTiming;
+    if (marketDurationHrs && marketDurationHrs > 0) {
+      const fractionRemaining = hoursBeforeClose / marketDurationHrs;
+      // fractionRemaining close to 0 = late bet. But only meaningful on long markets.
+      // Scale by market duration: short markets (<24h) get dampened
+      const durationMultiplier = Math.min(1, marketDurationHrs / (24 * 7)); // ramps 0→1 over a week
+      normalizedTiming = Math.max(0, Math.min(100, (1 - fractionRemaining) * 100 * durationMultiplier));
+    } else {
+      // No duration info, use absolute timing with moderate weight
+      normalizedTiming = Math.max(0, Math.min(100, 100 - (hoursBeforeClose / 168) * 100)) * 0.5;
+    }
+
+    // Outcome weighting: was this the CORRECT side?
+    const winOutcome = winningOutcomes[t.conditionId];
+    if (winOutcome && t.side === 'BUY') {
+      if (t.outcome === winOutcome) {
+        // Late + correct = strong signal, keep full score
+        timingScores.push(normalizedTiming);
+      } else {
+        // Late + wrong = NOT insider, score 0 for this trade
+        timingScores.push(0);
+      }
+    } else {
+      // No outcome data or not a buy, use dampened score
+      timingScores.push(normalizedTiming * 0.3);
+    }
+  }
+  const timingScore = timingScores.length > 0
+    ? timingScores.reduce((a, b) => a + b, 0) / timingScores.length
+    : 30; // neutral-low if no data
+
+  // --- Win rate ---
+  const { wins, losses } = computeWinLoss(trades, markets);
   const totalBets = wins + losses;
   const winRate = totalBets > 0 ? wins / totalBets : 0.5;
-  // Win rate > 80% = 100, 50% = 0
   const winRateScore = Math.max(0, Math.min(100, (winRate - 0.5) * 200));
 
-  // --- market_concentration ---
+  // --- Market concentration ---
   const uniqueMarkets = new Set(trades.map(t => t.conditionId)).size;
-  // Trading only 1-2 markets = high concentration = suspicious
   const concentrationScore = Math.max(0, Math.min(100, 100 - (uniqueMarkets / 20) * 100));
 
-  // --- total_profit ---
-  const totalVolume = betSizes.reduce((a, b) => a + b, 0);
-  const profitScore = Math.min(100, (Math.log10(Math.max(1, totalVolume)) / 5) * 100);
+  // --- Topic/domain edge detection ---
+  const tagWins = {}; // tag → { wins, total }
+  const tradesByMarket = {};
+  for (const t of trades) {
+    if (!tradesByMarket[t.conditionId]) tradesByMarket[t.conditionId] = [];
+    tradesByMarket[t.conditionId].push(t);
+  }
+  for (const [cid, mTrades] of Object.entries(tradesByMarket)) {
+    const tag = marketTagMap[cid];
+    const tagKey = Array.isArray(tag) ? tag[0] : (tag || 'unknown');
+    if (!tagWins[tagKey]) tagWins[tagKey] = { wins: 0, total: 0 };
+    const winOutcome = winningOutcomes[cid];
+    if (!winOutcome) continue;
+    for (const t of mTrades) {
+      if (t.side !== 'BUY') continue;
+      tagWins[tagKey].total++;
+      if (t.outcome === winOutcome) tagWins[tagKey].wins++;
+    }
+  }
 
-  // --- COMPOSITE SCORE ---
-  // Weights based on @thenarrator thesis:
-  // Fresh wallet + big bets + short timing + high win rate = insider
+  // Domain edge: high win rate concentrated in one topic
+  let domainEdgeScore = 0;
+  let topDomain = null;
+  const tagEntries = Object.entries(tagWins).filter(([, v]) => v.total >= 2);
+  if (tagEntries.length > 0) {
+    for (const [tag, { wins: tw, total: tt }] of tagEntries) {
+      const rate = tw / tt;
+      if (rate > 0.7 && tt >= 3) {
+        const score = Math.min(100, (rate - 0.5) * 200 * Math.min(1, tt / 5));
+        if (score > domainEdgeScore) {
+          domainEdgeScore = score;
+          topDomain = tag;
+        }
+      }
+    }
+    // Winning across many random topics = lower domain edge (more likely luck)
+    const winningDomains = tagEntries.filter(([, v]) => v.total >= 2 && v.wins / v.total > 0.6).length;
+    if (winningDomains > 3) domainEdgeScore *= 0.5; // spread = less suspicious
+  }
+
+  // --- Volume ---
+  const betSizes = trades.map(t => (t.size || 0) * (t.price || 0));
+  const totalVolume = betSizes.reduce((a, b) => a + b, 0);
+  const volumeScore = Math.min(100, (Math.log10(Math.max(1, totalVolume)) / 5) * 100);
+
+  // --- COMPOSITE SCORE (v2 weights) ---
   const weights = {
-    wallet_age: 0.15,    // fresh wallet
-    avg_bet_size: 0.15,  // big bets
-    timing: 0.25,        // close to resolution (strongest signal)
-    win_rate: 0.25,      // high win rate (strongest signal)
-    concentration: 0.10, // few markets
-    volume: 0.10,        // total volume
+    wallet_age: 0.10,
+    timing: 0.25,         // duration-normalized + outcome-weighted
+    win_rate: 0.20,
+    liquidity_size: 0.20, // NEW: liquidity-relative sizing
+    domain_edge: 0.10,    // NEW: topic concentration
+    concentration: 0.08,
+    volume: 0.07,
   };
 
-  const rawScore = 
+  let rawScore =
     walletAgeScore * weights.wallet_age +
-    avgBetScore * weights.avg_bet_size +
     timingScore * weights.timing +
     winRateScore * weights.win_rate +
+    liquiditySizeScore * weights.liquidity_size +
+    domainEdgeScore * weights.domain_edge +
     concentrationScore * weights.concentration +
-    profitScore * weights.volume;
+    volumeScore * weights.volume;
+
+  // --- Archetype-based capping ---
+  if (archetype === 'scalper') {
+    rawScore = Math.min(rawScore, 25);
+  } else if (archetype === 'retail') {
+    rawScore = Math.min(rawScore, 40);
+  }
+  // insider and whale: no cap
 
   const score = Math.round(Math.max(0, Math.min(100, rawScore)));
 
-  // Confidence based on data quality
-  const confidence = totalBets >= 10 ? 'high' 
-    : totalBets >= 5 ? 'medium' 
-    : totalBets >= 2 ? 'low' 
+  const confidence = totalBets >= 10 ? 'high'
+    : totalBets >= 5 ? 'medium'
+    : totalBets >= 2 ? 'low'
     : 'insufficient';
 
   return {
     score,
     confidence,
     tradeCount: trades.length,
+    archetype,
     breakdown: {
       wallet_age: { score: Math.round(walletAgeScore), days: Math.round(walletAgeDays), weight: weights.wallet_age },
-      avg_bet_size: { score: Math.round(avgBetScore), usd: Math.round(avgBetSize * 100) / 100, weight: weights.avg_bet_size },
-      timing: { score: Math.round(timingScore), samples: timingScores.length, weight: weights.timing },
+      timing: { score: Math.round(timingScore), samples: timingScores.length, weight: weights.timing, note: 'duration-normalized, outcome-weighted' },
       win_rate: { score: Math.round(winRateScore), rate: Math.round(winRate * 100) / 100, wins, losses, weight: weights.win_rate },
+      liquidity_size: { score: Math.round(liquiditySizeScore), avg_pct_of_liquidity: Math.round(avgLiqRelSize * 10000) / 100, weight: weights.liquidity_size },
+      domain_edge: { score: Math.round(domainEdgeScore), top_domain: topDomain, domains_analyzed: tagEntries.length, weight: weights.domain_edge },
       concentration: { score: Math.round(concentrationScore), unique_markets: uniqueMarkets, weight: weights.concentration },
-      volume: { score: Math.round(profitScore), total_usd: Math.round(totalVolume * 100) / 100, weight: weights.volume },
+      volume: { score: Math.round(volumeScore), total_usd: Math.round(totalVolume * 100) / 100, weight: weights.volume },
     },
     riskLevel: score >= 75 ? 'CRITICAL' : score >= 50 ? 'HIGH' : score >= 25 ? 'MEDIUM' : 'LOW',
   };
@@ -286,7 +455,7 @@ export function registerPrescienceRoutes(app) {
         total_wallets_analyzed: Object.keys(walletTrades).length,
         markets_scanned: fetchLimit,
         methodology: 'Wallets scored across recently resolved Polymarket markets. Higher score = more insider-like behavior.',
-        engine: 'Prescience v1.0',
+        engine: 'Prescience v2.0',
       });
     } catch (err) {
       console.error('Leaderboard error:', err);
@@ -351,7 +520,7 @@ export function registerPrescienceRoutes(app) {
         threshold,
         markets_scanned: scanLimit,
         total_alerts: alerts.length,
-        engine: 'Prescience v1.0',
+        engine: 'Prescience v2.0',
       });
     } catch (err) {
       console.error('Alerts error:', err);
@@ -432,7 +601,7 @@ export function registerPrescienceRoutes(app) {
           volume24hr: m.volume24hr,
           volumeTotal: m.volumeNum,
         })),
-        engine: 'Prescience v1.0',
+        engine: 'Prescience v2.0',
         tagline: 'See who sees first.',
       });
     } catch (err) {
@@ -520,7 +689,7 @@ export function registerPrescienceRoutes(app) {
           insider_risk: suspiciousCount >= 5 ? 'HIGH' : suspiciousCount >= 2 ? 'MEDIUM' : 'LOW',
         },
         wallets: walletScores.slice(0, 30),
-        engine: 'Prescience v1.0',
+        engine: 'Prescience v2.0',
       });
     } catch (err) {
       console.error('Market analysis error:', err);
@@ -674,7 +843,7 @@ export function registerPrescienceRoutes(app) {
         meta: {
           markets_scanned: results.length,
           timestamp: new Date().toISOString(),
-          engine: 'Prescience Scanner v1.0',
+          engine: 'Prescience Scanner v2.0',
           description: 'Live scan of active Polymarket markets for whale clustering, fresh wallet surges, and flow imbalances.',
         },
       });
@@ -706,9 +875,10 @@ export function registerPrescienceRoutes(app) {
       res.json({
         address,
         ...result,
+        version: '2.0',
         meta: {
-          engine: 'Prescience v1.0',
-          methodology: 'Composite score: wallet_age(15%) + bet_size(15%) + timing(25%) + win_rate(25%) + concentration(10%) + volume(10%)',
+          engine: 'Prescience v2.0',
+          methodology: 'v2: duration-normalized timing(25%) + win_rate(20%) + liquidity_size(20%) + wallet_age(10%) + domain_edge(10%) + concentration(8%) + volume(7%). Archetype classification caps scalper scores at 25.',
           tagline: 'See who sees first.',
         },
       });
@@ -905,7 +1075,7 @@ export function registerPrescienceRoutes(app) {
           total_signals: signals.length,
           min_confidence: minConfidence,
           timestamp: new Date().toISOString(),
-          engine: 'Prescience Signals v1.0',
+          engine: 'Prescience Signals v2.0',
           description: 'Copy-trade signals derived from smart money positioning on active Polymarket markets.',
           methodology: 'Wallets are scored by historical win rate on resolved markets. High-volume, high-win-rate wallets form the "smart money" cohort. Their consensus positioning generates directional signals.',
           disclaimer: 'Not financial advice. Signals reflect on-chain behavior patterns, not guaranteed outcomes.',
@@ -925,12 +1095,12 @@ export function registerPrescienceRoutes(app) {
   app.get('/prescience', (req, res) => {
     res.json({
       name: 'Prescience',
-      version: '1.0.0',
+      version: '2.0',
       tagline: 'See who sees first.',
-      description: 'Prediction market insider tracking engine. Bloomberg terminal for on-chain surveillance.',
+      description: 'Prediction market insider tracking engine v2. Eliminates false positives from short-duration market scalpers via archetype classification, duration-normalized timing, and liquidity-relative sizing.',
       by: 'Epistemic Observatory',
       endpoints: [
-        'GET /prescience/:address — Prescience Score + breakdown for a wallet',
+        'GET /prescience/:address — Prescience Score + breakdown + archetype for a wallet',
         'GET /prescience/leaderboard — Top suspicious wallets across recent markets',
         'GET /prescience/alerts — Recent high-score activity alerts',
         'GET /prescience/market/:marketId — Insider analysis for a specific market (conditionId or slug)',
@@ -940,10 +1110,23 @@ export function registerPrescienceRoutes(app) {
       ],
       scoring: {
         range: '0-100',
-        signals: ['wallet_age', 'avg_bet_size', 'timing', 'win_rate', 'concentration', 'volume'],
-        weights: 'timing(25%) + win_rate(25%) > wallet_age(15%) + bet_size(15%) > concentration(10%) + volume(10%)',
-        thesis: 'Fresh wallet + big bets + late timing + high win rate = insider signal',
+        signals: ['wallet_age', 'timing', 'win_rate', 'liquidity_size', 'domain_edge', 'concentration', 'volume'],
+        weights: 'timing(25%) + win_rate(20%) + liquidity_size(20%) > wallet_age(10%) + domain_edge(10%) > concentration(8%) + volume(7%)',
+        thesis: 'Late bet + correct outcome + long market + large liquidity share = insider signal. Short market scalpers auto-capped at 25.',
       },
+      archetypes: {
+        scalper: 'Many markets, small positions, short-duration preference, ~50% win rate → score capped at 25',
+        insider: 'Few markets, large positions relative to liquidity, high win rate, timing clusters on long markets',
+        whale: 'High volume ($10K+), spread across markets, moderate win rate',
+        retail: 'Small positions, no pattern → score capped at 40',
+      },
+      v2_improvements: [
+        'Market duration normalization — betting late on a 15min market ≠ betting late on a 6-month market',
+        'Archetype classification — scalpers no longer flagged as insiders',
+        'Outcome-weighted timing — only correct-side late bets on long markets generate signal',
+        'Topic/domain edge detection — consistent wins in one domain = real edge',
+        'Liquidity-relative sizing — bet size scored relative to market liquidity, not absolute USD',
+      ],
       data_source: 'Polymarket (Gamma API + Data API)',
     });
   });
