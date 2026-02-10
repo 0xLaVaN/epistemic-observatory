@@ -11,6 +11,14 @@ try {
   registerPrescienceRoutes = prescience.registerPrescienceRoutes;
 } catch(e) { console.warn('Prescience routes unavailable:', e.message); }
 
+let x402Middleware = (req, res, next) => next();
+let registerPricingRoute = () => {};
+try {
+  const x402 = await import('./x402.js');
+  x402Middleware = x402.x402Middleware;
+  registerPricingRoute = x402.registerPricingRoute;
+} catch(e) { console.warn('x402 middleware unavailable:', e.message); }
+
 let registerSolanaRoutes = () => {};
 try {
   const solana = await import('./solana-attestation.js');
@@ -135,11 +143,12 @@ app.get('/', (req, res) => {
       'GET /verify/:hash - Third-party verification of any commit',
       '--- PRESCIENCE (Insider Tracking) ---',
       'GET /prescience — Engine info + endpoints',
-      'GET /prescience/:address — Prescience Score for a wallet',
-      'GET /prescience/leaderboard — Top suspicious wallets',
-      'GET /prescience/alerts — Recent high-score activity',
-      'GET /prescience/market/:marketId — Insider analysis per market',
-      'GET /prescience/pulse — Market health + threat level',
+      'GET /prescience/:address — Prescience Score for a wallet ($0.01)',
+      'GET /prescience/leaderboard — Top suspicious wallets ($0.10)',
+      'GET /prescience/alerts — Recent high-score activity ($0.10)',
+      'GET /prescience/market/:marketId — Insider analysis per market ($0.05)',
+      'GET /prescience/pulse — Market health + threat level (free)',
+      'GET /prescience/pricing — x402 pricing + free tier status',
       '--- CONSENSUS ENGINE ---',
       'POST /consensus - Create a consensus question',
       'GET /consensus - List all questions',
@@ -1259,6 +1268,12 @@ app.get('/badge/:agent', (req, res) => {
 
 // Register Solana on-chain attestation routes
 registerSolanaRoutes(app);
+
+// x402 payment middleware (gates Prescience endpoints)
+app.use(x402Middleware);
+
+// Register Prescience pricing info route
+registerPricingRoute(app);
 
 // Register Prescience insider tracking routes
 registerPrescienceRoutes(app);
