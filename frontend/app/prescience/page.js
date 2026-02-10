@@ -1021,6 +1021,12 @@ function MarketsSection({ hotMarkets, activeMarkets }) {
     try {
       const res = await fetch(`${API_BASE}/prescience/market/${encodeURIComponent(conditionId)}`);
       const data = await res.json();
+      // Enrich with sidebar data if API market info is stale/wrong
+      const sidebarMatch = allMarkets.find(m => m.conditionId === conditionId);
+      if (sidebarMatch && data.market) {
+        data.market.question = sidebarMatch.question || data.market.question;
+        data.market.polymarketUrl = `https://polymarket.com/event/${sidebarMatch.slug || conditionId}`;
+      }
       setMarketData(data);
     } catch (e) {
       setMarketData({ error: e.message });
@@ -1047,7 +1053,7 @@ function MarketsSection({ hotMarkets, activeMarkets }) {
                   : 'bg-white/[0.02] border border-transparent hover:bg-white/[0.04] text-white/50'
               }`}
             >
-              <div className="truncate">{m.question}</div>
+              <div className="truncate">{m.question} {m.slug && <a href={`https://polymarket.com/event/${m.slug}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-white/10 hover:text-[#00f0ff]">↗</a>}</div>
               <div className="text-[8px] text-white/20 mt-1">
                 {m.suspicious_wallets != null && <span className="text-[#ff3366]">{m.suspicious_wallets} suspicious · </span>}
                 ${Math.round(m.volume || m.volumeTotal || 0).toLocaleString()}
@@ -1076,21 +1082,36 @@ function MarketsSection({ hotMarkets, activeMarkets }) {
         {!loading && marketData && !marketData.error && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
             <div className="rounded-xl border border-white/10 bg-white/[0.02] p-6">
-              <h3 className="text-sm text-white/70 mb-2">{marketData.market?.question || 'Market Analysis'}</h3>
+              <h3 className="text-sm text-white/70 mb-2">
+                {marketData.market?.polymarketUrl ? (
+                  <a href={marketData.market.polymarketUrl} target="_blank" rel="noopener noreferrer" className="hover:text-[#00f0ff] transition-colors">
+                    {marketData.market?.question || 'Market Analysis'} <span className="text-[9px] text-white/20">↗</span>
+                  </a>
+                ) : (marketData.market?.question || 'Market Analysis')}
+              </h3>
               <div className="grid grid-cols-3 gap-4 mt-4">
                 <div className="text-center">
-                  <div className="text-xl font-black text-[#ff3366]">{marketData.suspicious_wallets || 0}</div>
+                  <div className="text-xl font-black text-[#ff3366]">{marketData.analysis?.suspicious_wallets || marketData.suspicious_wallets || 0}</div>
                   <div className="text-[9px] text-white/30">SUSPICIOUS</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xl font-black text-white/60">{marketData.total_wallets || 0}</div>
+                  <div className="text-xl font-black text-white/60">{marketData.analysis?.unique_wallets || marketData.total_wallets || 0}</div>
                   <div className="text-[9px] text-white/30">TOTAL</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-xl font-black text-[#00f0ff]">${Math.round(marketData.volume || 0).toLocaleString()}</div>
+                  <div className="text-xl font-black text-[#00f0ff]">${Math.round(marketData.analysis?.total_volume_usd || marketData.market?.volume || 0).toLocaleString()}</div>
                   <div className="text-[9px] text-white/30">VOLUME</div>
                 </div>
               </div>
+              {marketData.analysis?.insider_risk && (
+                <div className="mt-3 text-center">
+                  <span className={`text-[10px] font-black tracking-widest px-3 py-1 rounded-full ${
+                    marketData.analysis.insider_risk === 'HIGH' ? 'bg-[#ff3366]/10 text-[#ff3366]' :
+                    marketData.analysis.insider_risk === 'MEDIUM' ? 'bg-amber-500/10 text-amber-400' :
+                    'bg-green-500/10 text-green-400'
+                  }`}>{marketData.analysis.insider_risk} INSIDER RISK</span>
+                </div>
+              )}
             </div>
             
             {/* Wallet list for this market */}

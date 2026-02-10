@@ -402,6 +402,7 @@ export function registerPrescienceRoutes(app) {
             hotMarkets.push({
               question: market.question,
               conditionId: market.conditionId,
+              slug: market.slug,
               volume: market.volumeNum,
               suspicious_wallets: marketSuspicious,
               closedTime: market.closedTime,
@@ -427,6 +428,7 @@ export function registerPrescienceRoutes(app) {
         active_markets: activeMarkets.slice(0, 5).map(m => ({
           question: m.question,
           conditionId: m.conditionId,
+          slug: m.slug,
           volume24hr: m.volume24hr,
           volumeTotal: m.volumeNum,
         })),
