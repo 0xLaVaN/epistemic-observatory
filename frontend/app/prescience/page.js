@@ -407,6 +407,7 @@ function NavBar({ active, onChange }) {
     { id: 'leaderboard', label: 'LEADERBOARD', icon: '◆' },
     { id: 'alerts', label: 'ALERTS', icon: '⚡' },
     { id: 'lookup', label: 'WALLET SCAN', icon: '⬡' },
+    { id: 'news', label: 'NEWS', icon: '📡' },
     { id: 'scanner', label: 'SCANNER', icon: '⊛' },
     { id: 'signals', label: 'SIGNALS', icon: '◎', href: '/prescience/signals' },
     { id: 'backtest', label: 'BACKTEST', icon: '▣', href: '/prescience/backtest' },
@@ -1139,6 +1140,154 @@ if (score > 70 && archetype === 'insider') {
   );
 }
 
+// ─── NEWS SECTION ──────────────────────────────────────────────────
+const SEVERITY_COLORS = { critical: '#ff3366', high: '#f0a000', medium: '#00f0ff', low: '#666' };
+const SEVERITY_LABELS = { critical: 'CRITICAL', high: 'HIGH', medium: 'MEDIUM', low: 'LOW' };
+
+function NewsSection() {
+  const [news, setNews] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/prescience/news`);
+        const data = await res.json();
+        setNews(data);
+      } catch {}
+      setLoading(false);
+    };
+    load();
+    const iv = setInterval(load, 300000); // 5 min
+    return () => clearInterval(iv);
+  }, []);
+
+  if (loading && !news) {
+    return (
+      <div className="text-center py-20">
+        <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }} className="inline-block mb-4">
+          <span className="text-3xl text-[#ff3366]">📡</span>
+        </motion.div>
+        <div className="text-[11px] text-white/30 tracking-widest">GENERATING INTELLIGENCE FEED...</div>
+      </div>
+    );
+  }
+
+  const items = news?.news || [];
+
+  return (
+    <div>
+      {/* Header */}
+      <div className="text-center mb-8">
+        <h2 className="text-2xl font-black tracking-[0.1em] text-white/80 mb-2">PRESCIENCE NEWS FEED</h2>
+        <p className="text-[11px] text-white/30 italic">"Truth has a price. See who's paying it."</p>
+        {news?.generated && (
+          <p className="text-[9px] text-white/15 mt-1">Generated {new Date(news.generated).toLocaleTimeString()} · {news.engine}</p>
+        )}
+      </div>
+
+      {items.length === 0 ? (
+        <div className="text-center py-20 text-white/30 text-sm">No news items generated. Markets may be quiet.</div>
+      ) : (
+        <div className="space-y-3 max-w-4xl mx-auto">
+          {items.map((item, i) => {
+            const sevColor = SEVERITY_COLORS[item.severity] || '#666';
+            const odds = Object.entries(item.currentOdds || {});
+
+            return (
+              <motion.div
+                key={item.slug + i}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.04 }}
+                className="relative rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.04] transition-all overflow-hidden group"
+              >
+                {/* Severity bar */}
+                <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-l-xl" style={{ backgroundColor: sevColor, boxShadow: `0 0 10px ${sevColor}60` }} />
+
+                <div className="p-5 pl-6">
+                  {/* Top row: severity badge + timestamp */}
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="text-[8px] font-black px-2 py-0.5 rounded tracking-wider border"
+                        style={{ color: sevColor, borderColor: `${sevColor}50`, background: `${sevColor}15` }}
+                      >
+                        {SEVERITY_LABELS[item.severity]}
+                      </span>
+                      {item.flowDirection && item.flowDirection !== 'NEUTRAL' && (
+                        <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${item.flowDirection === 'BUY' ? 'text-[#00ff88] bg-[#00ff88]/10' : 'text-[#ff3366] bg-[#ff3366]/10'}`}>
+                          {item.flowDirection === 'BUY' ? '▲ BUY' : '▼ SELL'} PRESSURE
+                        </span>
+                      )}
+                      {item.freshWallets > 0 && (
+                        <span className="text-[8px] text-[#f0a000]/70 bg-[#f0a000]/10 px-1.5 py-0.5 rounded">
+                          🆕 {item.freshWallets} fresh
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[8px] text-white/15">{new Date(item.timestamp).toLocaleTimeString()}</span>
+                  </div>
+
+                  {/* Headline */}
+                  <h3 className="text-sm font-bold text-white/80 mb-1 group-hover:text-white transition-colors">
+                    {item.headline}
+                  </h3>
+
+                  {/* Market name */}
+                  <div className="text-[10px] text-white/40 mb-3">
+                    {item.slug ? (
+                      <a href={`https://polymarket.com/event/${item.slug}`} target="_blank" rel="noopener noreferrer" className="hover:text-[#00f0ff] transition-colors">
+                        {item.market} <span className="text-white/15">↗</span>
+                      </a>
+                    ) : item.market}
+                  </div>
+
+                  {/* Odds bar */}
+                  {odds.length > 0 && (
+                    <div className="mb-3">
+                      <div className="flex rounded-full overflow-hidden h-3 bg-white/5">
+                        {odds.map(([outcome, prob], oi) => {
+                          const barColor = oi === 0 ? '#00ff88' : '#ff3366';
+                          return (
+                            <motion.div
+                              key={outcome}
+                              className="h-full relative"
+                              style={{ backgroundColor: barColor, opacity: 0.7 }}
+                              initial={{ width: 0 }}
+                              animate={{ width: `${Math.round(prob * 100)}%` }}
+                              transition={{ duration: 0.8, delay: 0.1 }}
+                            />
+                          );
+                        })}
+                      </div>
+                      <div className="flex justify-between mt-1">
+                        {odds.map(([outcome, prob]) => (
+                          <span key={outcome} className="text-[8px] text-white/30">
+                            {outcome}: <span className="font-bold text-white/50">{Math.round(prob * 100)}%</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bottom row: volume + signal */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-white/25">
+                      24h Vol: <span className="font-bold text-white/40">${item.volume24h >= 1e6 ? `${(item.volume24h / 1e6).toFixed(1)}M` : `${Math.round(item.volume24h / 1000)}K`}</span>
+                    </span>
+                    <span className="text-[9px] text-white/30 italic">{item.signal}</span>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MARKETS SECTION ───────────────────────────────────────────────
 function MarketsSection({ hotMarkets, activeMarkets }) {
   const [selectedMarket, setSelectedMarket] = useState(null);
@@ -1598,6 +1747,7 @@ export default function PrescienceDashboard() {
             {view === 'leaderboard' && <LeaderboardSection leaderboard={leaderboard} />}
             {view === 'alerts' && <AlertsSection alerts={alerts} />}
             {view === 'lookup' && <WalletLookupSection />}
+            {view === 'news' && <NewsSection />}
             {view === 'scanner' && <ScannerSection />}
             {view === 'markets' && <MarketsSection hotMarkets={hotMarkets} activeMarkets={activeMarkets} />}
           </motion.div>
