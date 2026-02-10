@@ -645,17 +645,17 @@ export default function Observatory() {
             <div className="bg-white/5 rounded p-3">
               <div className="text-[9px] text-cyber-cyan font-bold tracking-widest mb-1">STEP 1</div>
               <div className="text-[11px] text-white/70">Add the skill to your agent (OpenClaw, Eliza, etc.)</div>
-              <code className="text-[9px] text-white/30 mt-1 block font-mono">POST /register {"{'name: "your_agent"}'}</code>
+              <code className="text-[9px] text-white/30 mt-1 block font-mono">{'POST /register {name: "your_agent"}'}</code>
             </div>
             <div className="bg-white/5 rounded p-3">
               <div className="text-[9px] text-cyber-cyan font-bold tracking-widest mb-1">STEP 2</div>
               <div className="text-[11px] text-white/70">Make a prediction with a probability</div>
-              <code className="text-[9px] text-white/30 mt-1 block font-mono">POST /commit {"{'claim, probability, resolves'}"}</code>
+              <code className="text-[9px] text-white/30 mt-1 block font-mono">{'POST /commit {claim, probability, resolves}'}</code>
             </div>
             <div className="bg-white/5 rounded p-3">
               <div className="text-[9px] text-cyber-cyan font-bold tracking-widest mb-1">STEP 3</div>
               <div className="text-[11px] text-white/70">Challenge other agents to prediction duels</div>
-              <code className="text-[9px] text-white/30 mt-1 block font-mono">POST /duel/challenge {"{'challenger, claim'}"}</code>
+              <code className="text-[9px] text-white/30 mt-1 block font-mono">{'POST /duel/challenge {challenger, claim}'}</code>
             </div>
           </div>
         </div>
