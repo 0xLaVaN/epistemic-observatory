@@ -141,6 +141,21 @@ function classifyArchetype(trades, markets = []) {
   }).filter(Boolean);
   const avgLiqRelSize = liqRelSizes.length > 0 ? liqRelSizes.reduce((a, b) => a + b, 0) / liqRelSizes.length : 0;
 
+  // Wallet age detection: fresh wallets betting big = strongest insider signal
+  const timestamps = trades.map(t => t.timestamp).filter(Boolean).sort();
+  const firstTradeTs = timestamps.length > 0 ? timestamps[0] : Date.now() / 1000;
+  const walletAgeDays = (Date.now() / 1000 - firstTradeTs) / 86400;
+  const isFreshWallet = walletAgeDays < 14; // less than 2 weeks old
+  const isVeryFresh = walletAgeDays < 3; // less than 3 days old
+
+  // Fresh wallet + large bets = highest conviction insider signal
+  if (isFreshWallet && avgBetSize > 500) {
+    return 'fresh_insider'; // new archetype: brand new account, immediately large
+  }
+  if (isVeryFresh && avgBetSize > 100) {
+    return 'fresh_insider'; // even moderate bets on a 3-day-old wallet are suspicious
+  }
+
   // Classification logic
   if (uniqueMarkets > 10 && avgBetSize < 200 && shortMarketPref > 0.5 && winRate < 0.65) {
     return 'scalper';
@@ -152,6 +167,10 @@ function classifyArchetype(trades, markets = []) {
     return 'insider';
   }
   if (uniqueMarkets <= 8 && winRate > 0.65 && avgLiqRelSize > 0.01 && totalBets >= 2) {
+    return 'insider';
+  }
+  // Fresh wallet with moderate activity still suspicious even if doesn't hit insider thresholds
+  if (isFreshWallet && totalVolume > 1000 && uniqueMarkets <= 3) {
     return 'insider';
   }
   if (totalVolume >= 5000) {
@@ -375,8 +394,11 @@ function computePrescienceScore(trades, markets = []) {
     concentrationScore * weights.concentration +
     volumeScore * weights.volume;
 
-  // --- Archetype-based capping ---
-  if (archetype === 'scalper') {
+  // --- Archetype-based capping/boosting ---
+  if (archetype === 'fresh_insider') {
+    // Fresh wallet + big bets = minimum score of 75, no cap
+    rawScore = Math.max(rawScore, 75);
+  } else if (archetype === 'scalper') {
     rawScore = Math.min(rawScore, 25);
   } else if (archetype === 'retail') {
     rawScore = Math.min(rawScore, 40);
@@ -1569,6 +1591,7 @@ export function registerPrescienceRoutes(app) {
         thesis: 'Late bet + correct outcome + long market + large liquidity share = insider signal. Short market scalpers auto-capped at 25.',
       },
       archetypes: {
+        fresh_insider: 'Account <14 days old + large bets = highest conviction insider signal → score floor 75',
         scalper: 'Many markets, small positions, short-duration preference, ~50% win rate → score capped at 25',
         insider: 'Few markets, large positions relative to liquidity, high win rate, timing clusters on long markets',
         whale: 'High volume ($10K+), spread across markets, moderate win rate',
