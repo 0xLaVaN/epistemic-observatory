@@ -411,6 +411,7 @@ function NavBar({ active, onChange }) {
     { id: 'scanner', label: 'SCANNER', icon: '⊛' },
     { id: 'signals', label: 'SIGNALS', icon: '◎', href: '/prescience/signals' },
     { id: 'backtest', label: 'BACKTEST', icon: '▣', href: '/prescience/backtest' },
+    { id: 'webhooks', label: 'WEBHOOKS', icon: '🔔', href: '/prescience/webhooks' },
     { id: 'markets', label: 'MARKETS', icon: '◇' },
   ];
   

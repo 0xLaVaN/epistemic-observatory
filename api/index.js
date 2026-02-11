@@ -25,6 +25,12 @@ try {
   registerPricingRoute = x402.registerPricingRoute;
 } catch(e) { console.warn('x402 middleware unavailable:', e.message); }
 
+let registerWebhookRoutes = () => {};
+try {
+  const webhooksModule = await import('./webhooks.js');
+  registerWebhookRoutes = webhooksModule.registerWebhookRoutes;
+} catch(e) { console.warn('Webhook routes unavailable:', e.message); }
+
 let registerSolanaRoutes = () => {};
 try {
   const solana = await import('./solana-attestation.js');
@@ -156,6 +162,15 @@ app.get('/', (req, res) => {
       'GET /prescience/pulse — Market health + threat level (free)',
       'GET /prescience/signals — Smart money copy-trade signals ($0.10)',
       'GET /prescience/pricing — x402 pricing + free tier status',
+      '--- WEBHOOKS (Push Alerts) ---',
+      'POST /prescience/webhooks — Register a callback URL',
+      'GET /prescience/webhooks — List registered webhooks',
+      'GET /prescience/webhooks/:id — Get webhook details',
+      'PATCH /prescience/webhooks/:id — Update webhook config',
+      'DELETE /prescience/webhooks/:id — Unregister webhook',
+      'POST /prescience/webhooks/:id/test — Send test delivery',
+      'GET /prescience/webhooks/events — List event types',
+      'GET /prescience/webhooks/deliveries/log — Delivery history',
       '--- CONSENSUS ENGINE ---',
       'POST /consensus - Create a consensus question',
       'GET /consensus - List all questions',
@@ -1285,6 +1300,7 @@ registerPricingRoute(app);
 // Register Prescience insider tracking routes
 registerPrescienceRoutes(app);
 registerBacktestRoutes(app);
+registerWebhookRoutes(app);
 
 // For Vercel serverless
 export default app;
