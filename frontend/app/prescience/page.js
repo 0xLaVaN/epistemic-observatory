@@ -882,6 +882,7 @@ function WalletLookupSection() {
     setError(null);
     try {
       const res = await fetch(`${API_BASE}/prescience/${encodeURIComponent(address.trim())}`);
+      if (!res.ok) throw new Error(`API returned ${res.status}`);
       const data = await res.json();
       if (data.error) setError(data.error);
       else setResult(data);
@@ -1152,6 +1153,7 @@ function NewsSection() {
     const load = async () => {
       try {
         const res = await fetch(`${API_BASE}/prescience/news`);
+        if (!res.ok) throw new Error(`API returned ${res.status}`);
         const data = await res.json();
         setNews(data);
       } catch {}
@@ -1299,7 +1301,10 @@ function MarketsSection({ hotMarkets, activeMarkets }) {
     setSelectedMarket(conditionId);
     try {
       const res = await fetch(`${API_BASE}/prescience/market/${encodeURIComponent(conditionId)}`);
-      const data = await res.json();
+      if (!res.ok) throw new Error(`API returned ${res.status}`);
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { throw new Error('Invalid response from API'); }
       // Enrich with sidebar data if API market info is stale/wrong
       const sidebarMatch = allMarkets.find(m => m.conditionId === conditionId);
       if (sidebarMatch && data.market) {
@@ -1475,6 +1480,7 @@ function ScannerSection() {
       setLoading(true);
       try {
         const res = await fetch(`${API_BASE}/prescience/scanner?limit=20`);
+        if (!res.ok) throw new Error(`API returned ${res.status}`);
         const json = await res.json();
         setData(json);
       } catch (e) {
