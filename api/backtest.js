@@ -135,9 +135,37 @@ async function runBacktest(marketLimit = 10) {
       const trades = await getMarketTrades(market.conditionId);
       if (!trades || trades.length < 5) continue;
 
-      // Group by trader
+      // --- Filter: exclude consensus-aligned near-expiry entries ---
+      // If entry odds were >90% consensus-aligned AND market resolves within 72hrs of entry,
+      // these are near-certainty yield farms, not predictions. Exclude from hit rate calc.
+      const closeTime = market.closedTime ? new Date(market.closedTime).getTime() / 1000 : null;
+      let consensusOutcome = null;
+      let maxOdds = 0;
+      try {
+        const mOutcomes = JSON.parse(market.outcomes || '[]');
+        const mPrices = JSON.parse(market.outcomePrices || '[]');
+        // Use pre-resolution prices from market snapshot (best available proxy)
+        for (let pi = 0; pi < mPrices.length; pi++) {
+          const p = parseFloat(mPrices[pi]) || 0;
+          if (p > maxOdds) { maxOdds = p; consensusOutcome = mOutcomes[pi]; }
+        }
+      } catch {}
+
+      const filteredTrades = trades.filter(t => {
+        if (t.side !== 'BUY') return true; // only filter buys for hit rate
+        // Was this trade on the consensus side at >90% odds?
+        const onConsensusSide = t.outcome === consensusOutcome && maxOdds >= 0.90;
+        if (!onConsensusSide) return true; // keep non-consensus trades
+        // Did market resolve within 72hrs of this entry?
+        if (!closeTime || !t.timestamp) return true;
+        const hoursToClose = (closeTime - t.timestamp) / 3600;
+        if (hoursToClose <= 72 && hoursToClose >= 0) return false; // exclude: yield farm
+        return true;
+      });
+
+      // Group by trader (using filtered trades)
       const traderTrades = {};
-      for (const t of trades) {
+      for (const t of filteredTrades) {
         const addr = t.proxyWallet || t.maker || t.taker || t.user;
         if (!addr) continue;
         if (!traderTrades[addr]) traderTrades[addr] = [];
@@ -239,7 +267,7 @@ async function runBacktest(marketLimit = 10) {
     meta: {
       engine: 'Prescience Backtest v1.0',
       timestamp: new Date().toISOString(),
-      methodology: 'Traders scored by wallet age, bet size, timing proximity to resolution, and concentration. Grouped into low/mid/high buckets. Accuracy = % who bought the winning outcome.',
+      methodology: 'Traders scored by wallet age, bet size, timing proximity to resolution, and concentration. Grouped into low/mid/high buckets. Accuracy = % who bought the winning outcome. Consensus-aligned entries (>90% odds) within 72hrs of resolution are excluded as yield farms.',
       caveat: 'Sample size matters. Small n = noisy results. Run with more markets for confidence.',
     },
   };

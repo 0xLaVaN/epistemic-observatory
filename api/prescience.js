@@ -694,13 +694,39 @@ async function detectClusters(options = {}) {
             // Timing tightness: 0-1, higher = tighter
             const tightness = windowMs > 0 ? 1 - (spreadMin / (windowHours * 60)) : 1;
 
-            // Conviction score: composite 0-100
-            const conviction = Math.round(Math.min(100,
-              Math.min(30, walletCount * 6) +                    // wallet count (max 30)
-              Math.min(25, (totalVolume / 5000) * 25) +          // volume (max 25 at $5k+)
-              (avgWinRate - 0.5) * 60 +                          // win rate bonus (max 30 at 100%)
-              tightness * 15                                      // tightness bonus (max 15)
-            ));
+            // --- Conviction score v2: signal quality over volume ---
+
+            // 1. Contrarian positioning: wallets betting AGAINST consensus get 3x weight
+            const currentPrice = currentPrices[outcome] || 0.5;
+            const isContrarian = currentPrice < 0.4; // betting on outcome with <40% odds = contrarian
+            const contrarianMultiplier = isContrarian ? 3.0 : 1.0;
+
+            // 2. Odds movement correlation: if odds moved >2% toward entry direction recently
+            const vol24 = parseFloat(market.volume24hr || market.volume24h || 0);
+            const liq = parseFloat(market.liquidityNum || 0);
+            const oddsMoving = liq > 0 && (vol24 / liq) > 0.02;
+            const oddsMovementMultiplier = oddsMoving ? 2.0 : 1.0;
+
+            // 3. Timing: entries clustered before known event dates get 2x
+            const endDate = market.endDate ? new Date(market.endDate).getTime() : null;
+            const avgEntryTime = inWindow.reduce((s, t) => s + t.timestamp, 0) / walletCount;
+            const hoursBeforeEvent = endDate ? (endDate - avgEntryTime) / 3600000 : null;
+            // Sweet spot: 12-72 hours before resolution = likely pre-event positioning
+            const timingMultiplier = (hoursBeforeEvent !== null && hoursBeforeEvent >= 12 && hoursBeforeEvent <= 72) ? 2.0 : 1.0;
+
+            // 4. Raw wallet count: capped contribution at +2 conviction regardless of count
+            const walletCountScore = Math.min(2, walletCount - minWallets + 1) * 5; // max 10 pts
+
+            // Base signal quality score
+            const signalQuality =
+              walletCountScore +                                           // max 10 (capped)
+              Math.min(20, (avgWinRate - 0.5) * 80) +                    // win rate: max 20
+              tightness * 20 +                                             // tightness: max 20
+              (isContrarian ? 25 : 0) +                                   // contrarian bonus: 25
+              (oddsMoving ? 15 : 0) +                                     // odds movement: 15
+              (timingMultiplier > 1 ? 10 : 0);                            // pre-event timing: 10
+
+            const conviction = Math.round(Math.min(100, signalQuality * contrarianMultiplier * Math.min(oddsMovementMultiplier, 1.5)));
 
             if (conviction > bestScore) {
               bestScore = conviction;
