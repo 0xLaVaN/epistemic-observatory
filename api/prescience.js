@@ -794,7 +794,7 @@ async function detectClusters(options = {}) {
         watchlist_size: watchlistData.wallets.length,
         markets_scanned: activeMarkets.length,
         timestamp: new Date().toISOString(),
-        engine: 'Prescience v2.0 — Cluster Detection',
+        engine: 'Prescience v2.1 — Cluster Detection',
         parameters: { min_wallets: minWallets, min_conviction: minConviction, window_hours: windowHours, lookback_hours: lookbackHours },
       },
     };
@@ -850,7 +850,7 @@ export function registerPrescienceRoutes(app) {
         total_wallets_analyzed: Object.keys(walletTrades).length,
         markets_scanned: fetchLimit,
         methodology: 'Wallets scored across recently resolved Polymarket markets. Higher score = more insider-like behavior.',
-        engine: 'Prescience v2.0',
+        engine: 'Prescience v2.1',
       });
     } catch (err) {
       console.error('Leaderboard error:', err);
@@ -872,7 +872,7 @@ export function registerPrescienceRoutes(app) {
           total_wallets_scanned: watchlistData.total_wallets_scanned,
           criteria: 'Win rate >60% across 5+ resolved markets',
           cache_ttl_hours: 6,
-          engine: 'Prescience v2.0 — Smart Watchlist',
+          engine: 'Prescience v2.1 — Smart Watchlist',
         },
       });
     } catch (err) {
@@ -960,7 +960,7 @@ export function registerPrescienceRoutes(app) {
         threshold,
         markets_scanned: scanLimit,
         total_alerts: alerts.length,
-        engine: 'Prescience v2.0',
+        engine: 'Prescience v2.1',
       });
     } catch (err) {
       console.error('Alerts error:', err);
@@ -1041,7 +1041,7 @@ export function registerPrescienceRoutes(app) {
           volume24hr: m.volume24hr,
           volumeTotal: m.volumeNum,
         })),
-        engine: 'Prescience v2.0',
+        engine: 'Prescience v2.1',
         tagline: 'See who sees first.',
       });
     } catch (err) {
@@ -1129,7 +1129,7 @@ export function registerPrescienceRoutes(app) {
           insider_risk: suspiciousCount >= 5 ? 'HIGH' : suspiciousCount >= 2 ? 'MEDIUM' : 'LOW',
         },
         wallets: walletScores.slice(0, 30),
-        engine: 'Prescience v2.0',
+        engine: 'Prescience v2.1',
       });
     } catch (err) {
       console.error('Market analysis error:', err);
@@ -1283,7 +1283,7 @@ export function registerPrescienceRoutes(app) {
         meta: {
           markets_scanned: results.length,
           timestamp: new Date().toISOString(),
-          engine: 'Prescience Scanner v2.0',
+          engine: 'Prescience Scanner v2.1',
           description: 'Live scan of active Polymarket markets for whale clustering, fresh wallet surges, and flow imbalances.',
         },
       });
@@ -1402,9 +1402,9 @@ export function registerPrescienceRoutes(app) {
       res.json({
         address,
         ...result,
-        version: '2.0',
+        version: '2.1',
         meta: {
-          engine: 'Prescience v2.0',
+          engine: 'Prescience v2.1',
           methodology: 'v2: duration-normalized timing(25%) + win_rate(20%) + liquidity_size(20%) + wallet_age(10%) + domain_edge(10%) + concentration(8%) + volume(7%). Archetype classification caps scalper scores at 25.',
           tagline: 'See who sees first.',
         },
@@ -1772,7 +1772,7 @@ export function registerPrescienceRoutes(app) {
   app.get('/prescience', (req, res) => {
     res.json({
       name: 'Prescience',
-      version: '2.0',
+      version: '2.1',
       tagline: 'See who sees first.',
       description: 'Prediction market insider tracking engine v2. Eliminates false positives from short-duration market scalpers via archetype classification, duration-normalized timing, and liquidity-relative sizing.',
       by: 'Epistemic Observatory',
