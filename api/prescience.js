@@ -166,9 +166,31 @@ function classifyArchetype(trades, markets = []) {
   if (isVeryFresh && avgBetSize > 100 && hasOddsMovement) {
     return 'fresh_insider'; // even moderate bets on a 3-day-old wallet are suspicious if moving odds
   }
-  // Fallback: fresh wallet with large bets but no odds movement = whale, not insider
+  // Fallback: fresh wallet with large bets but no odds movement = yield farmer, not insider
   if (isFreshWallet && avgBetSize > 500) {
-    return 'whale';
+    // Check for systematic yield farming: >5 unrelated categories, all consensus side, no odds correlation
+    const categories = new Set();
+    let allConsensus = true;
+    for (const m of markets) {
+      if (!m.conditionId) continue;
+      const walletTrades = trades.filter(t => t.conditionId === m.conditionId);
+      if (walletTrades.length === 0) continue;
+      categories.add(m.category || m.tags?.[0] || 'unknown');
+      // Check if on consensus side (>90%)
+      try {
+        const prices = JSON.parse(m.outcomePrices || '[]');
+        const outcomes = JSON.parse(m.outcomes || '[]');
+        const maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
+        const maxIdx = prices.findIndex(p => parseFloat(p) === maxPrice);
+        const consensusOutcome = outcomes[maxIdx];
+        const onConsensus = walletTrades.every(t => t.side !== 'BUY' || t.outcome === consensusOutcome);
+        if (maxPrice < 0.90 || !onConsensus) allConsensus = false;
+      } catch { allConsensus = false; }
+    }
+    if (categories.size >= 5 && allConsensus) {
+      return 'systematic_yield_farmer';
+    }
+    return 'yield_farmer';
   }
 
   // Classification logic
@@ -409,10 +431,50 @@ function computePrescienceScore(trades, markets = []) {
     concentrationScore * weights.concentration +
     volumeScore * weights.volume;
 
+  // --- Expiry proximity discount ---
+  // Markets within 48hrs of resolution with >95% consensus are yield farming, not insider flow
+  let expiryDiscount = 1.0;
+  let expiryProximityHours = null;
+  let consensusPct = null;
+  for (const m of markets) {
+    if (!m.conditionId) continue;
+    const endDate = m.endDate || m.closedTime;
+    if (!endDate) continue;
+    const msToExpiry = new Date(endDate).getTime() - Date.now();
+    const hrsToExpiry = msToExpiry / 3600000;
+    if (hrsToExpiry <= 0 || hrsToExpiry > 48) continue;
+
+    // Calculate consensus percentage from current prices
+    let maxPrice = 0;
+    try {
+      const prices = JSON.parse(m.outcomePrices || '[]');
+      maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
+    } catch {}
+
+    if (maxPrice >= 0.95 && hrsToExpiry <= 48) {
+      const thisDiscount = hrsToExpiry <= 24 && maxPrice >= 0.99 ? 0.3
+        : hrsToExpiry <= 48 && maxPrice >= 0.95 ? 0.3
+        : 1.0;
+      if (thisDiscount < expiryDiscount) {
+        expiryDiscount = thisDiscount;
+        expiryProximityHours = Math.round(hrsToExpiry * 10) / 10;
+        consensusPct = Math.round(maxPrice * 100);
+      }
+    }
+  }
+  rawScore *= expiryDiscount;
+
   // --- Archetype-based capping/boosting ---
   if (archetype === 'fresh_insider') {
     // Fresh wallet + big bets = minimum score of 75, no cap
-    rawScore = Math.max(rawScore, 75);
+    // But respect expiry discount — yield farmers on expiring markets shouldn't get boosted
+    if (expiryDiscount >= 1.0) {
+      rawScore = Math.max(rawScore, 75);
+    }
+  } else if (archetype === 'systematic_yield_farmer') {
+    rawScore = Math.min(rawScore, 20); // auto-cap: cross-category consensus farming
+  } else if (archetype === 'yield_farmer') {
+    rawScore = Math.min(rawScore, 30); // consensus-side, no odds movement
   } else if (archetype === 'scalper') {
     rawScore = Math.min(rawScore, 25);
   } else if (archetype === 'retail') {
@@ -440,6 +502,7 @@ function computePrescienceScore(trades, markets = []) {
       domain_edge: { score: Math.round(domainEdgeScore), top_domain: topDomain, domains_analyzed: tagEntries.length, weight: weights.domain_edge },
       concentration: { score: Math.round(concentrationScore), unique_markets: uniqueMarkets, weight: weights.concentration },
       volume: { score: Math.round(volumeScore), total_usd: Math.round(totalVolume * 100) / 100, weight: weights.volume },
+      expiry_discount: { factor: expiryDiscount, expiry_proximity_hours: expiryProximityHours, consensus_pct: consensusPct },
     },
     riskLevel: score >= 75 ? 'CRITICAL' : score >= 50 ? 'HIGH' : score >= 25 ? 'MEDIUM' : 'LOW',
   };
