@@ -149,11 +149,26 @@ function classifyArchetype(trades, markets = []) {
   const isVeryFresh = walletAgeDays < 3; // less than 3 days old
 
   // Fresh wallet + large bets = highest conviction insider signal
-  if (isFreshWallet && avgBetSize > 500) {
-    return 'fresh_insider'; // new archetype: brand new account, immediately large
+  // But require >2% odds movement to filter out yield farmers on consensus markets
+  const hasOddsMovement = markets.some(m => {
+    const walletTrades = trades.filter(t => t.conditionId === m.conditionId);
+    if (walletTrades.length === 0) return false;
+    // Check if market has recent price movement (using volume as proxy for activity)
+    const recentVolume = parseFloat(m.volume24hr || m.volume24h || 0);
+    const totalLiq = parseFloat(m.liquidityNum || 0);
+    // >2% movement proxy: significant recent volume relative to liquidity
+    return totalLiq > 0 && (recentVolume / totalLiq) > 0.02;
+  });
+
+  if (isFreshWallet && avgBetSize > 500 && hasOddsMovement) {
+    return 'fresh_insider'; // new archetype: brand new account, immediately large, with price impact
   }
-  if (isVeryFresh && avgBetSize > 100) {
-    return 'fresh_insider'; // even moderate bets on a 3-day-old wallet are suspicious
+  if (isVeryFresh && avgBetSize > 100 && hasOddsMovement) {
+    return 'fresh_insider'; // even moderate bets on a 3-day-old wallet are suspicious if moving odds
+  }
+  // Fallback: fresh wallet with large bets but no odds movement = whale, not insider
+  if (isFreshWallet && avgBetSize > 500) {
+    return 'whale';
   }
 
   // Classification logic
@@ -632,7 +647,20 @@ async function detectClusters(options = {}) {
 
           if (!bestCluster || bestCluster.conviction < minConviction) continue;
 
+          // Expiry proximity discount: near-certain markets about to expire aren't insider signals
           const currentPrice = currentPrices[outcome] || 0.5;
+          const maxPrice = Math.max(...Object.values(currentPrices).map(Number).filter(Boolean), 0.5);
+          if (market.endDate) {
+            const msToExpiry = new Date(market.endDate).getTime() - Date.now();
+            const hrsToExpiry = msToExpiry / 3600000;
+            if (hrsToExpiry > 0 && hrsToExpiry <= 24 && maxPrice >= 0.99) {
+              bestCluster.conviction = Math.round(bestCluster.conviction * 0.5);
+            } else if (hrsToExpiry > 0 && hrsToExpiry <= 48 && maxPrice >= 0.95) {
+              bestCluster.conviction = Math.round(bestCluster.conviction * 0.7);
+            }
+          }
+
+          if (bestCluster.conviction < minConviction) continue;
           const smartImplied = Math.min(0.95, bestCluster.avgWinRate); // smart money implied probability
 
           clusters.push({
