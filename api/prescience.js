@@ -1468,28 +1468,24 @@ export function registerPrescienceRoutes(app) {
           const BASELINE_FRESH_RATIO = isSampleCapped ? 0.60 : 0.30;
           const excessFreshRatio = Math.max(0, freshWalletRatio - BASELINE_FRESH_RATIO);
 
-          // Multi-signal threat scoring:
-          // - Fresh wallet excess above baseline (normalized)
-          // - Flow imbalance (directional pressure)
-          // - Combination of both = real signal
-          let threatScore = 0;
-
-          // Fresh wallets only count if meaningfully above baseline
-          if (excessFreshRatio > 0.15) threatScore += 30;
-          else if (excessFreshRatio > 0.08) threatScore += 15;
-
-          // Flow imbalance: strong directional flow = suspicious
-          if (absImbalance > 0.5) threatScore += 35;
-          else if (absImbalance > 0.3) threatScore += 20;
-          else if (absImbalance > 0.15) threatScore += 10;
-
-          // Combined signal bonus: high fresh wallets + high imbalance = real insider flow
-          if (excessFreshRatio > 0.08 && absImbalance > 0.3) threatScore += 20;
-
-          // Large whale presence
-          const maxWalletVol = Math.max(...Object.values(wallets).map(w => w.volume), 0);
+          // Conviction v3: weighted multi-signal formula
+          // conviction = normalize(flow_imbalance * 4 + large_position_ratio * 3 + fresh_wallet_excess * 2 + volume_vs_liquidity_ratio * 1)
           const liq = parseFloat(market.liquidityNum) || 1;
-          if (maxWalletVol / liq > 0.05) threatScore += 15;
+          const largePositionThreshold = 1000; // $1000+ = large position
+          const largePositions = Object.values(wallets).filter(w => w.volume >= largePositionThreshold).length;
+          const largePositionRatio = totalWallets > 0 ? largePositions / totalWallets : 0;
+          const vol24 = parseFloat(market.volume24hr) || totalVolume;
+          const volumeVsLiquidityRatio = liq > 0 ? Math.min(vol24 / liq, 5) / 5 : 0; // normalize to 0-1, cap at 5x
+
+          // Each component normalized to 0-1
+          const normFlowImbalance = absImbalance; // already 0-1
+          const normLargePositionRatio = Math.min(largePositionRatio, 1); // 0-1
+          const normFreshExcess = Math.min(excessFreshRatio / 0.4, 1); // 0-1, 40%+ excess = max
+          const normVolLiq = volumeVsLiquidityRatio; // already 0-1
+
+          // Weighted sum (max raw = 4+3+2+1 = 10), normalize to 0-100
+          const rawConviction = normFlowImbalance * 4 + normLargePositionRatio * 3 + normFreshExcess * 2 + normVolLiq * 1;
+          let threatScore = Math.round((rawConviction / 10) * 100);
 
           // Near-expiry consensus discount: markets about to resolve at >95% aren't suspicious
           let nearExpiryConsensus = false;
@@ -1526,8 +1522,12 @@ export function registerPrescienceRoutes(app) {
             total_volume_usd: Math.round(totalVolume * 100) / 100,
             flow_direction: flowImbalance > 0.1 ? 'BUY' : flowImbalance < -0.1 ? 'SELL' : 'NEUTRAL',
             flow_imbalance: Math.round(Math.abs(flowImbalance) * 100) / 100,
+            large_positions: largePositions,
+            large_position_ratio: Math.round(largePositionRatio * 100) / 100,
+            volume_vs_liquidity: Math.round(volumeVsLiquidityRatio * 100) / 100,
             threat_score: threatScore,
             threat_level: threatLevel,
+            conviction_weights: { flow_imbalance: 4, large_position_ratio: 3, fresh_wallet_excess: 2, volume_vs_liquidity: 1 },
             near_expiry_consensus: nearExpiryConsensus,
           });
         } catch {}
