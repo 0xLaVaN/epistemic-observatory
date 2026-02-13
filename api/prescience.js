@@ -1217,12 +1217,44 @@ export function registerPrescienceRoutes(app) {
           const flowImbalance = totalFlow > 0 ? (recentBuyVolume - recentSellVolume) / totalFlow : 0;
           const freshSurge = freshWallets.length / Math.max(1, walletList.length);
 
-          const marketSuspicion = Math.round(Math.min(100,
+          // Conviction v2: detect if whale activity is just consensus-aligned (yield farming)
+          let consensusDiscount = 1.0; // no discount by default
+          let isContrarian = false;
+          try {
+            const outcomes = JSON.parse(market.outcomes || '[]');
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            if (outcomes.length && prices.length && dominantOutcome) {
+              const idx = outcomes.indexOf(dominantOutcome);
+              const dominantPrice = idx >= 0 ? parseFloat(prices[idx]) : 0;
+              const maxPrice = Math.max(...prices.map(p => parseFloat(p)));
+              const marketConsensusPct = Math.round(maxPrice * 100);
+              
+              if (dominantPrice > 0.8) {
+                // Whales betting on the side that's already >80% — this is yield farming, not insider signal
+                consensusDiscount = 0.3;
+              } else if (dominantPrice > 0.6) {
+                consensusDiscount = 0.6;
+              } else if (dominantPrice < 0.4) {
+                // Whales betting AGAINST consensus — genuinely suspicious, boost
+                isContrarian = true;
+                consensusDiscount = 1.5;
+              }
+
+              // Near-expiry consensus discount: markets within 48hrs of resolution with >90% consensus
+              const hoursToExpiry = market.endDate ? (new Date(market.endDate).getTime() - Date.now()) / 3600000 : Infinity;
+              if (hoursToExpiry < 48 && marketConsensusPct > 90) {
+                consensusDiscount *= 0.3; // near-certainty yield farm
+              }
+            }
+          } catch {}
+
+          const rawSuspicion = 
             (consensusStrength > 0.75 ? 30 : consensusStrength > 0.6 ? 15 : 0) +
             (freshSurge > 0.3 ? 25 : freshSurge > 0.15 ? 12 : 0) +
             (Math.abs(flowImbalance) > 0.6 ? 25 : Math.abs(flowImbalance) > 0.3 ? 12 : 0) +
-            (whales.some(w => w.volume > 5000) ? 20 : whales.some(w => w.volume > 1000) ? 10 : 0)
-          ));
+            (whales.some(w => w.volume > 5000) ? 20 : whales.some(w => w.volume > 1000) ? 10 : 0);
+          
+          const marketSuspicion = Math.round(Math.min(100, rawSuspicion * consensusDiscount));
 
           let currentPrices = {};
           try {
@@ -1243,6 +1275,7 @@ export function registerPrescienceRoutes(app) {
               currentPrices,
             },
             suspicion: marketSuspicion,
+            conviction_context: { raw_score: rawSuspicion, consensus_discount: Math.round(consensusDiscount * 100) / 100, is_contrarian: isContrarian },
             riskLevel: marketSuspicion >= 60 ? 'HIGH' : marketSuspicion >= 30 ? 'MEDIUM' : 'LOW',
             signals: {
               whale_consensus: {
