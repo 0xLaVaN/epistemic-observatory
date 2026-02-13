@@ -1459,9 +1459,53 @@ export function registerPrescienceRoutes(app) {
           } catch {}
 
           const absImbalance = Math.abs(flowImbalance);
-          const threatLevel = (freshWalletCount > 100 && absImbalance > 0.7) ? 'CRITICAL'
-            : freshWalletCount > 50 ? 'HIGH'
-            : freshWalletCount > 20 ? 'MODERATE'
+          const totalWallets = Object.keys(wallets).length;
+          const freshWalletRatio = totalWallets > 0 ? freshWalletCount / totalWallets : 0;
+          const isSampleCapped = trades.length >= 295; // near the 300 limit = likely capped
+
+          // Baseline normalization: on capped samples, ~60% fresh wallets is normal
+          // Only flag if ratio significantly exceeds baseline AND other signals confirm
+          const BASELINE_FRESH_RATIO = isSampleCapped ? 0.60 : 0.30;
+          const excessFreshRatio = Math.max(0, freshWalletRatio - BASELINE_FRESH_RATIO);
+
+          // Multi-signal threat scoring:
+          // - Fresh wallet excess above baseline (normalized)
+          // - Flow imbalance (directional pressure)
+          // - Combination of both = real signal
+          let threatScore = 0;
+
+          // Fresh wallets only count if meaningfully above baseline
+          if (excessFreshRatio > 0.15) threatScore += 30;
+          else if (excessFreshRatio > 0.08) threatScore += 15;
+
+          // Flow imbalance: strong directional flow = suspicious
+          if (absImbalance > 0.5) threatScore += 35;
+          else if (absImbalance > 0.3) threatScore += 20;
+          else if (absImbalance > 0.15) threatScore += 10;
+
+          // Combined signal bonus: high fresh wallets + high imbalance = real insider flow
+          if (excessFreshRatio > 0.08 && absImbalance > 0.3) threatScore += 20;
+
+          // Large whale presence
+          const maxWalletVol = Math.max(...Object.values(wallets).map(w => w.volume), 0);
+          const liq = parseFloat(market.liquidityNum) || 1;
+          if (maxWalletVol / liq > 0.05) threatScore += 15;
+
+          // Near-expiry consensus discount: markets about to resolve at >95% aren't suspicious
+          let nearExpiryConsensus = false;
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
+            const hoursToExpiry = market.endDate ? (new Date(market.endDate).getTime() - Date.now()) / 3600000 : Infinity;
+            if (hoursToExpiry < 48 && maxPrice >= 0.95) {
+              nearExpiryConsensus = true;
+              threatScore = Math.round(threatScore * 0.3);
+            }
+          } catch {}
+
+          const threatLevel = threatScore >= 70 ? 'CRITICAL'
+            : threatScore >= 45 ? 'HIGH'
+            : threatScore >= 25 ? 'MODERATE'
             : 'LOW';
 
           markets.push({
@@ -1474,12 +1518,17 @@ export function registerPrescienceRoutes(app) {
             endDate: market.endDate,
             currentPrices,
             fresh_wallets: freshWalletCount,
-            total_wallets: Object.keys(wallets).length,
+            fresh_wallet_ratio: Math.round(freshWalletRatio * 100) / 100,
+            fresh_wallet_excess: Math.round(excessFreshRatio * 100) / 100,
+            sample_capped: isSampleCapped,
+            total_wallets: totalWallets,
             total_trades: trades.length,
             total_volume_usd: Math.round(totalVolume * 100) / 100,
             flow_direction: flowImbalance > 0.1 ? 'BUY' : flowImbalance < -0.1 ? 'SELL' : 'NEUTRAL',
             flow_imbalance: Math.round(Math.abs(flowImbalance) * 100) / 100,
+            threat_score: threatScore,
             threat_level: threatLevel,
+            near_expiry_consensus: nearExpiryConsensus,
           });
         } catch {}
       }
