@@ -1413,6 +1413,94 @@ export function registerPrescienceRoutes(app) {
     }
   });
 
+  // --- GET /prescience/scan ---
+  // Market scan: list of active markets with fresh wallet counts, volumes, threat levels
+  // NOTE: Must be before /:address to avoid being caught by param route
+  app.get('/prescience/scan', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit) || 20, 30);
+      const activeMarkets = await getActiveMarkets(limit);
+
+      const markets = [];
+      for (const market of activeMarkets) {
+        try {
+          const trades = await getMarketTrades(market.conditionId, 300);
+          if (!trades || trades.length < 3) continue;
+
+          const now = Date.now() / 1000;
+          const wallets = {};
+          let freshWalletCount = 0;
+          let buyVolume = 0, sellVolume = 0;
+
+          for (const t of trades) {
+            const w = (t.proxyWallet || '').toLowerCase();
+            if (!w) continue;
+            const size = (t.size || 0) * (t.price || 0);
+            if (!wallets[w]) wallets[w] = { firstSeen: t.timestamp, volume: 0, trades: 0 };
+            wallets[w].volume += size;
+            wallets[w].trades++;
+            if (t.timestamp < wallets[w].firstSeen) wallets[w].firstSeen = t.timestamp;
+            if (t.side === 'BUY') buyVolume += size; else sellVolume += size;
+          }
+
+          for (const [, data] of Object.entries(wallets)) {
+            const ageDays = (now - data.firstSeen) / 86400;
+            if (ageDays < 7 && data.volume > 50) freshWalletCount++;
+          }
+
+          const totalVolume = buyVolume + sellVolume;
+          const flowImbalance = totalVolume > 0 ? (buyVolume - sellVolume) / totalVolume : 0;
+
+          let currentPrices = {};
+          try {
+            const outcomes = JSON.parse(market.outcomes || '[]');
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            outcomes.forEach((o, i) => { currentPrices[o] = parseFloat(prices[i]); });
+          } catch {}
+
+          const absImbalance = Math.abs(flowImbalance);
+          const threatLevel = (freshWalletCount > 100 && absImbalance > 0.7) ? 'CRITICAL'
+            : freshWalletCount > 50 ? 'HIGH'
+            : freshWalletCount > 20 ? 'MODERATE'
+            : 'LOW';
+
+          markets.push({
+            question: market.question,
+            conditionId: market.conditionId,
+            slug: market.slug,
+            volume24hr: market.volume24hr,
+            volumeTotal: market.volumeNum,
+            liquidity: market.liquidityNum,
+            endDate: market.endDate,
+            currentPrices,
+            fresh_wallets: freshWalletCount,
+            total_wallets: Object.keys(wallets).length,
+            total_trades: trades.length,
+            total_volume_usd: Math.round(totalVolume * 100) / 100,
+            flow_direction: flowImbalance > 0.1 ? 'BUY' : flowImbalance < -0.1 ? 'SELL' : 'NEUTRAL',
+            flow_imbalance: Math.round(Math.abs(flowImbalance) * 100) / 100,
+            threat_level: threatLevel,
+          });
+        } catch {}
+      }
+
+      markets.sort((a, b) => b.fresh_wallets - a.fresh_wallets);
+
+      res.json({
+        scan: markets,
+        meta: {
+          markets_scanned: markets.length,
+          timestamp: new Date().toISOString(),
+          engine: 'Prescience Scan v2.1',
+          description: 'Market-level scan of active Polymarket markets with fresh wallet counts, volumes, and threat levels.',
+        },
+      });
+    } catch (err) {
+      console.error('Scan error:', err);
+      res.status(500).json({ error: 'Market scan failed', detail: err.message });
+    }
+  });
+
   // --- GET /prescience/:address ---
   // Returns Prescience Score + breakdown for a wallet (MUST be after specific routes)
   app.get('/prescience/:address', async (req, res) => {
