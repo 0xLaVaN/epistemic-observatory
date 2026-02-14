@@ -1481,7 +1481,10 @@ export function registerPrescienceRoutes(app) {
           const normFlowImbalance = absImbalance; // already 0-1
           const normLargePositionRatio = Math.min(largePositionRatio, 1); // 0-1
           const normFreshExcess = Math.min(excessFreshRatio / 0.4, 1); // 0-1, 40%+ excess = max
-          const normVolLiq = volumeVsLiquidityRatio; // already 0-1
+          // Cap volume_vs_liquidity at 0.5x weight when flow_imbalance is low (<0.3)
+          // Prevents high-volume but directionless markets from inflating threat scores
+          const volLiqWeightMultiplier = absImbalance < 0.3 ? 0.5 : 1.0;
+          const normVolLiq = volumeVsLiquidityRatio * volLiqWeightMultiplier; // already 0-1, dampened when no directional signal
 
           // Weighted sum (max raw = 4+3+2+1 = 10), normalize to 0-100
           const rawConviction = normFlowImbalance * 4 + normLargePositionRatio * 3 + normFreshExcess * 2 + normVolLiq * 1;
