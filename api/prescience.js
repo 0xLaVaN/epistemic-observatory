@@ -119,10 +119,14 @@ function classifyArchetype(trades, markets = []) {
     }
   }
 
-  // Compute win rate
-  const { wins, losses } = computeWinLoss(trades, markets);
+  // Compute win rate (with price-movement proxy for unresolved markets)
+  const { wins, losses, softWins, softLosses } = computeWinLoss(trades, markets);
   const totalBets = wins + losses;
-  const winRate = totalBets > 0 ? wins / totalBets : 0.5;
+  const softTotal = softWins + softLosses;
+  // Blend: resolved wins count full, soft wins count at 0.5 weight
+  const blendedWins = wins + softWins * 0.5;
+  const blendedTotal = totalBets + softTotal * 0.5;
+  const winRate = blendedTotal > 0 ? blendedWins / blendedTotal : 0.5;
 
   // Avg market duration for this wallet's trades
   const durations = trades.map(t => marketDurations[t.conditionId]).filter(Boolean);
@@ -226,6 +230,8 @@ function computeWinLoss(trades, markets) {
     tradesByMarket[t.conditionId].push(t);
   }
   let wins = 0, losses = 0;
+  // Price-movement proxy for unresolved markets
+  let softWins = 0, softLosses = 0;
   for (const [cid, mTrades] of Object.entries(tradesByMarket)) {
     const market = markets.find(m => m.conditionId === cid);
     if (!market || !market.outcomePrices) continue;
@@ -233,16 +239,33 @@ function computeWinLoss(trades, markets) {
       const prices = JSON.parse(market.outcomePrices);
       const outcomes = JSON.parse(market.outcomes || '[]');
       const winningIdx = prices.findIndex(p => parseFloat(p) === 1);
-      if (winningIdx === -1) continue;
-      const winningOutcome = outcomes[winningIdx];
-      const buys = mTrades.filter(t => t.side === 'BUY');
-      for (const buy of buys) {
-        if (buy.outcome === winningOutcome) wins++;
-        else losses++;
+      if (winningIdx !== -1) {
+        // Resolved market — use actual outcome
+        const winningOutcome = outcomes[winningIdx];
+        const buys = mTrades.filter(t => t.side === 'BUY');
+        for (const buy of buys) {
+          if (buy.outcome === winningOutcome) wins++;
+          else losses++;
+        }
+      } else {
+        // Unresolved market — price-movement proxy
+        // If wallet bought outcome X at price P and current price > P, that's a soft win
+        const buys = mTrades.filter(t => t.side === 'BUY');
+        for (const buy of buys) {
+          const outcomeIdx = outcomes.indexOf(buy.outcome);
+          if (outcomeIdx === -1) continue;
+          const currentPrice = parseFloat(prices[outcomeIdx]) || 0;
+          const buyPrice = parseFloat(buy.price) || 0;
+          if (buyPrice <= 0 || currentPrice <= 0) continue;
+          const priceMove = currentPrice - buyPrice;
+          // Require meaningful movement (>5 cents) to count
+          if (priceMove > 0.05) softWins++;
+          else if (priceMove < -0.05) softLosses++;
+        }
       }
     } catch {}
   }
-  return { wins, losses };
+  return { wins, losses, softWins, softLosses };
 }
 
 /**
@@ -356,10 +379,14 @@ function computePrescienceScore(trades, markets = []) {
     ? timingScores.reduce((a, b) => a + b, 0) / timingScores.length
     : 30; // neutral-low if no data
 
-  // --- Win rate ---
-  const { wins, losses } = computeWinLoss(trades, markets);
+  // --- Win rate (with price-movement proxy for unresolved markets) ---
+  const { wins, losses, softWins, softLosses } = computeWinLoss(trades, markets);
   const totalBets = wins + losses;
-  const winRate = totalBets > 0 ? wins / totalBets : 0.5;
+  const softTotal = softWins + softLosses;
+  // Blend: resolved wins count full, soft wins (price moved in wallet's direction) count at 0.5 weight
+  const blendedWins = wins + softWins * 0.5;
+  const blendedTotal = totalBets + softTotal * 0.5;
+  const winRate = blendedTotal > 0 ? blendedWins / blendedTotal : 0.5;
   const winRateScore = Math.max(0, Math.min(100, (winRate - 0.5) * 200));
 
   // --- Market concentration ---
@@ -497,7 +524,7 @@ function computePrescienceScore(trades, markets = []) {
     breakdown: {
       wallet_age: { score: Math.round(walletAgeScore), days: Math.round(walletAgeDays), weight: weights.wallet_age },
       timing: { score: Math.round(timingScore), samples: timingScores.length, weight: weights.timing, note: 'duration-normalized, outcome-weighted' },
-      win_rate: { score: Math.round(winRateScore), rate: Math.round(winRate * 100) / 100, wins, losses, weight: weights.win_rate },
+      win_rate: { score: Math.round(winRateScore), rate: Math.round(winRate * 100) / 100, wins, losses, soft_wins: softWins, soft_losses: softLosses, weight: weights.win_rate, note: softTotal > 0 ? 'includes price-movement proxy for unresolved markets (0.5x weight)' : undefined },
       liquidity_size: { score: Math.round(liquiditySizeScore), avg_pct_of_liquidity: Math.round(avgLiqRelSize * 10000) / 100, weight: weights.liquidity_size },
       domain_edge: { score: Math.round(domainEdgeScore), top_domain: topDomain, domains_analyzed: tagEntries.length, weight: weights.domain_edge },
       concentration: { score: Math.round(concentrationScore), unique_markets: uniqueMarkets, weight: weights.concentration },
