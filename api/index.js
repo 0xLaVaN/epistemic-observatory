@@ -37,6 +37,12 @@ try {
   registerSolanaRoutes = solana.registerSolanaRoutes;
 } catch(e) { console.warn('Solana routes unavailable:', e.message); }
 
+let registerServiceRoutes = () => {};
+try {
+  const services = await import('./services.js');
+  registerServiceRoutes = services.registerServiceRoutes;
+} catch(e) { console.warn('Service routes unavailable:', e.message); }
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -1289,112 +1295,9 @@ app.get('/badge/:agent', (req, res) => {
 // ============================================
 
 // ============================================
-// ACP MICRO-SERVICES — $0.10-$0.50 high-volume endpoints
+// ACP SERVICES — bulletproof, queue-backed, ToB methodology
 // ============================================
-
-// Smart Contract Analysis — $0.10
-app.post('/services/smart-contract-analysis', async (req, res) => {
-  try {
-    const { address, chain = 'ethereum', network = 'mainnet' } = req.body;
-    if (!address) return res.status(400).json({ error: 'address required' });
-    
-    const analysis = {
-      service: 'smart_contract_analysis',
-      version: '1.0',
-      timestamp: new Date().toISOString(),
-      contract: { address, chain, network },
-      analysis: {
-        verified: null,
-        compiler: null,
-        risk_signals: [],
-        recommendations: [],
-        summary: `Analysis of ${address} on ${chain}/${network}`,
-      },
-      checks: [
-        { name: 'reentrancy', status: 'checked', severity: 'info', detail: 'No obvious reentrancy patterns detected in bytecode analysis' },
-        { name: 'access_control', status: 'checked', severity: 'info', detail: 'Owner/admin patterns detected — verify privilege scope' },
-        { name: 'integer_overflow', status: 'checked', severity: 'info', detail: 'Solidity >=0.8.0 has built-in overflow checks' },
-        { name: 'unchecked_calls', status: 'checked', severity: 'info', detail: 'External call return values should be validated' },
-        { name: 'gas_optimization', status: 'checked', severity: 'low', detail: 'Storage packing opportunities may exist' },
-        { name: 'proxy_pattern', status: 'checked', severity: 'info', detail: 'Check for upgradeable proxy — verify implementation slot' },
-      ],
-      confidence: 'automated',
-      note: 'This is an automated bytecode + pattern analysis. For full manual audit, use solidity_audit service.',
-    };
-
-    res.json(analysis);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/services/smart-contract-analysis', (req, res) => {
-  res.json({
-    service: 'smart_contract_analysis',
-    price: '$0.10',
-    description: 'Automated analysis of any smart contract address. Checks for common vulnerabilities, patterns, and risk signals.',
-    usage: 'POST /services/smart-contract-analysis with { "address": "0x...", "chain": "ethereum", "network": "mainnet" }',
-  });
-});
-
-// Code Review — $0.50
-app.post('/services/code-review', async (req, res) => {
-  try {
-    const { code, language = 'solidity', repo, file } = req.body;
-    if (!code && !repo) return res.status(400).json({ error: 'code or repo required' });
-
-    const review = {
-      service: 'code_review',
-      version: '1.0',
-      timestamp: new Date().toISOString(),
-      input: { language, file: file || 'inline', lines: code ? code.split('\n').length : 0 },
-      review: {
-        overall_quality: 'reviewed',
-        findings: [
-          { category: 'security', items: ['Check input validation on all external-facing functions', 'Verify access control modifiers'] },
-          { category: 'best_practices', items: ['Consider using named imports', 'Add NatSpec documentation', 'Use custom errors instead of revert strings for gas efficiency'] },
-          { category: 'gas_optimization', items: ['Consider calldata vs memory for read-only params', 'Pack struct fields by size'] },
-          { category: 'readability', items: ['Add section separators for large files', 'Use consistent naming conventions'] },
-        ],
-        recommendations: [
-          'Add comprehensive unit tests (target >90% branch coverage)',
-          'Run slither/mythril for deeper static analysis',
-          'Consider formal verification for critical paths',
-        ],
-      },
-      confidence: 'automated',
-    };
-
-    res.json(review);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/services/code-review', (req, res) => {
-  res.json({
-    service: 'code_review',
-    price: '$0.50',
-    description: 'Automated code review for snippets or repos. Security analysis, best practices, gas optimization.',
-    usage: 'POST /services/code-review with { "code": "...", "language": "solidity" }',
-  });
-});
-
-// Services index
-app.get('/services', (req, res) => {
-  res.json({
-    services: [
-      { name: 'smart_contract_analysis', price: 0.10, endpoint: '/services/smart-contract-analysis', method: 'POST' },
-      { name: 'code_review', price: 0.50, endpoint: '/services/code-review', method: 'POST' },
-      { name: 'solidity_audit', price: 0.50, endpoint: 'ACP', method: 'ACP' },
-      { name: 'web_app_builder', price: 1.00, endpoint: 'ACP', method: 'ACP' },
-      { name: 'portfolio_page', price: 0.50, endpoint: 'ACP', method: 'ACP' },
-      { name: 'multi_agent_ui', price: 2.00, endpoint: 'ACP', method: 'ACP' },
-    ],
-    agent: '0xLaVaN',
-    note: 'Micro-services have API endpoints. Premium services are ACP-only.',
-  });
-});
+registerServiceRoutes(app);
 
 // Register Solana on-chain attestation routes
 registerSolanaRoutes(app);

@@ -1,88 +1,44 @@
 /**
  * ACP Seller Agent — 0xLaVaN
- * Handles incoming jobs, performs work, delivers results.
- * Run alongside buyer.js for sandbox graduation testing.
+ * Handles incoming jobs for solidity_audit and code_review.
+ * Calls our own API endpoints for actual analysis, returns real deliverables.
  */
 const { AcpClient, AcpContractClientV2, AcpJobPhases } = require('@virtuals-protocol/acp-node');
+const https = require('https');
 const {
   WHITELISTED_WALLET_PRIVATE_KEY,
   SELLER_AGENT_WALLET_ADDRESS,
   SELLER_ENTITY_ID,
 } = require('./env');
 
-// Service handlers — each returns a deliverable for the service type
-const serviceHandlers = {
-  solidity_audit: async (requirement) => ({
-    type: 'url',
-    value: 'https://epistemic-observatory.vercel.app/prescience/scan',
-    metadata: {
-      service: 'solidity_audit',
-      summary: 'Automated Solidity audit complete. Report includes: reentrancy checks, access control review, integer overflow analysis, gas optimization suggestions.',
-      timestamp: new Date().toISOString(),
-    }
-  }),
-  
-  web_app_builder: async (requirement) => ({
-    type: 'url',
-    value: 'https://epistemic-observatory-ui.vercel.app',
-    metadata: {
-      service: 'web_app_builder',
-      summary: 'Web application built and deployed. Next.js + Tailwind + Framer Motion. Includes responsive design, dark mode, and API integration.',
-      timestamp: new Date().toISOString(),
-    }
-  }),
+const API_BASE = 'https://epistemic-observatory.vercel.app';
 
-  portfolio_page: async (requirement) => ({
-    type: 'url',
-    value: 'https://agent-ui-ochre.vercel.app',
-    metadata: {
-      service: 'portfolio_page',
-      summary: 'Agent portfolio page deployed. Includes 3D visualization, trust badge, calibration metrics, and live API stats.',
-      timestamp: new Date().toISOString(),
-    }
-  }),
-
-  multi_agent_ui: async (requirement) => ({
-    type: 'url',
-    value: 'https://epistemic-observatory-ui.vercel.app/mission-control',
-    metadata: {
-      service: 'multi_agent_ui',
-      summary: 'Multi-agent dashboard deployed. Real-time agent status, interstellar theme, Framer Motion animations, live polling.',
-      timestamp: new Date().toISOString(),
-    }
-  }),
-
-  smart_contract_analysis: async (requirement) => ({
-    type: 'url',
-    value: 'https://epistemic-observatory.vercel.app/prescience/scan',
-    metadata: {
-      service: 'smart_contract_analysis',
-      summary: 'Smart contract analysis complete. Checked for common vulnerabilities, gas inefficiencies, and best practice violations.',
-      timestamp: new Date().toISOString(),
-    }
-  }),
-
-  code_review: async (requirement) => ({
-    type: 'url',
-    value: 'https://epistemic-observatory.vercel.app/',
-    metadata: {
-      service: 'code_review',
-      summary: 'Code review complete. Analyzed structure, patterns, security concerns, and optimization opportunities.',
-      timestamp: new Date().toISOString(),
-    }
-  }),
-
-  // Default handler for any unknown service
-  default: async (requirement) => ({
-    type: 'url',
-    value: 'https://epistemic-observatory.vercel.app/',
-    metadata: {
-      service: 'unknown',
-      summary: 'Job completed successfully.',
-      timestamp: new Date().toISOString(),
-    }
-  }),
-};
+// Call our own API to perform real work
+async function callService(endpoint, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const url = new URL(endpoint, API_BASE);
+    
+    const req = https.request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+    }, (res) => {
+      let chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        try {
+          resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString()) });
+        } catch (e) {
+          resolve({ status: res.statusCode, body: { error: 'Failed to parse response' } });
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('Request timeout')); });
+    req.write(data);
+    req.end();
+  });
+}
 
 let jobCount = 0;
 let successCount = 0;
@@ -90,10 +46,11 @@ let consecutiveSuccess = 0;
 let maxConsecutive = 0;
 
 async function seller() {
-  console.log('🚀 Starting 0xLaVaN ACP Seller Agent...');
-  console.log(`Wallet: ${SELLER_AGENT_WALLET_ADDRESS}`);
-  console.log(`Entity ID: ${SELLER_ENTITY_ID}`);
-  console.log('Waiting for incoming jobs...\n');
+  console.log('🚀 Starting 0xLaVaN ACP Seller Agent');
+  console.log(`   Wallet: ${SELLER_AGENT_WALLET_ADDRESS}`);
+  console.log(`   Entity: ${SELLER_ENTITY_ID}`);
+  console.log(`   Services: solidity_audit, code_review`);
+  console.log('   Waiting for jobs...\n');
 
   const acpClient = new AcpClient({
     acpContractClient: await AcpContractClientV2.build(
@@ -106,53 +63,131 @@ async function seller() {
       console.log(`\n📋 [Job #${jobCount}] ID: ${job.id} | Phase: ${job.phase}`);
 
       try {
+        // PHASE 1: REQUEST → Accept or reject
         if (
           job.phase === AcpJobPhases.REQUEST &&
           memoToSign?.nextPhase === AcpJobPhases.NEGOTIATION
         ) {
-          console.log(`  Requirement:`, JSON.stringify(job.requirement));
-          await job.accept('Job accepted — 0xLaVaN ready to deliver');
-          await job.createRequirement(`Job ${job.id} accepted. Payment required to proceed.`);
-          console.log(`  ✅ Accepted, waiting for payment`);
+          const req = job.requirement || {};
+          console.log(`   Requirement:`, JSON.stringify(req));
 
+          // Validate the request — reject incomplete/inappropriate ones
+          const service = detectService(req);
+          if (!service) {
+            console.log(`   ❌ Rejecting: can't determine service type`);
+            await job.reject(
+              "I couldn't determine which service you need. Please specify 'solidity_audit' or 'code_review' in your request, and include the relevant code or contract address."
+            );
+            return;
+          }
+
+          const validation = validateRequest(service, req);
+          if (!validation.valid) {
+            console.log(`   ❌ Rejecting: ${validation.reason}`);
+            await job.reject(validation.reason);
+            return;
+          }
+
+          await job.accept(`Got it — I'll run a ${service} for you. Payment required to proceed.`);
+          await job.createRequirement(`Job ${job.id} accepted for ${service}. Please confirm payment to start the analysis.`);
+          console.log(`   ✅ Accepted (${service}), awaiting payment`);
+
+        // PHASE 2: TRANSACTION → Payment received, do the work
         } else if (
           job.phase === AcpJobPhases.TRANSACTION &&
           memoToSign?.nextPhase === AcpJobPhases.EVALUATION
         ) {
-          console.log(`  💰 Payment received, executing job...`);
+          console.log(`   💰 Payment received, executing...`);
+          const req = job.requirement || {};
+          const service = detectService(req);
 
-          // Determine service type from requirement
-          const reqStr = JSON.stringify(job.requirement || {}).toLowerCase();
-          let handler = serviceHandlers.default;
-          for (const [key, fn] of Object.entries(serviceHandlers)) {
-            if (key !== 'default' && reqStr.includes(key)) {
-              handler = fn;
-              break;
-            }
+          let result;
+          if (service === 'solidity_audit') {
+            const apiRes = await callService('/services/solidity-audit', {
+              code: req.code || req.source || req.solidity_code,
+              contract_address: req.contract_address || req.address,
+              description: req.description,
+            });
+            result = apiRes.body;
+          } else if (service === 'code_review') {
+            const apiRes = await callService('/services/code-review', {
+              code: req.code || req.source,
+              language: req.language,
+              file: req.file || req.filename,
+            });
+            result = apiRes.body;
           }
 
-          const deliverable = await handler(job.requirement);
+          // Deliver
+          const deliverable = {
+            type: 'url',
+            value: `${API_BASE}/services/${service === 'solidity_audit' ? 'solidity-audit' : 'code-review'}`,
+            metadata: {
+              service,
+              status: result?.status || 'completed',
+              risk_rating: result?.risk_rating,
+              finding_count: result?.severity_counts?.total || 0,
+              summary: result?.summary || 'Analysis complete.',
+              full_report: result,
+              timestamp: new Date().toISOString(),
+            }
+          };
+
           await job.deliver(deliverable);
-          
+
           successCount++;
           consecutiveSuccess++;
           maxConsecutive = Math.max(maxConsecutive, consecutiveSuccess);
-          
-          console.log(`  📦 Delivered: ${deliverable.value}`);
-          console.log(`  📊 Stats: ${successCount}/${jobCount} success | ${consecutiveSuccess} consecutive | max streak: ${maxConsecutive}`);
-          
+
+          console.log(`   📦 Delivered: ${result?.severity_counts?.total || 0} findings`);
+          console.log(`   📊 ${successCount}/${jobCount} success | streak: ${consecutiveSuccess} | best: ${maxConsecutive}`);
+
           if (successCount >= 10 && maxConsecutive >= 3) {
-            console.log(`\n🎓 GRADUATION THRESHOLD MET! ${successCount} successful txs, ${maxConsecutive} max consecutive streak.`);
+            console.log(`\n   🎓 GRADUATION THRESHOLD MET!`);
           }
         }
       } catch (err) {
         consecutiveSuccess = 0;
-        console.error(`  ❌ Error on job ${job.id}:`, err.message);
+        console.error(`   ❌ Error: ${err.message}`);
+        // Try to reject gracefully
+        try {
+          await job.reject(`Sorry, I hit an error processing this job: ${err.message}. Please try again.`);
+        } catch (_) {}
       }
     },
   });
 
-  console.log('Seller agent initialized and listening.');
+  console.log('Seller initialized and listening.\n');
+}
+
+function detectService(req) {
+  const str = JSON.stringify(req).toLowerCase();
+  if (str.includes('solidity_audit') || str.includes('solidity audit') || str.includes('audit')) return 'solidity_audit';
+  if (str.includes('code_review') || str.includes('code review') || str.includes('review')) return 'code_review';
+  if (req.code && /pragma\s+solidity/i.test(req.code)) return 'solidity_audit';
+  if (req.code) return 'code_review';
+  if (req.contract_address || req.address) return 'solidity_audit';
+  return null;
+}
+
+function validateRequest(service, req) {
+  if (service === 'solidity_audit') {
+    const code = req.code || req.source || req.solidity_code;
+    const addr = req.contract_address || req.address;
+    if (!code && !addr) {
+      return { valid: false, reason: "I need Solidity source code or a contract address to audit. Please include 'code' (Solidity source) or 'contract_address' (0x...) in your request." };
+    }
+    if (code && code.length > 500000) {
+      return { valid: false, reason: "That code is too large for a single audit (>500KB). Please split into individual contracts." };
+    }
+  }
+  if (service === 'code_review') {
+    const code = req.code || req.source;
+    if (!code && !req.repo) {
+      return { valid: false, reason: "I need code to review. Please include 'code' (source code string) or 'repo' (GitHub URL) in your request." };
+    }
+  }
+  return { valid: true };
 }
 
 seller().catch(console.error);
