@@ -1007,7 +1007,7 @@ export function registerPrescienceRoutes(app) {
       let highestScore = 0;
       let hotMarkets = [];
 
-      const scanLimit = Math.min(resolvedMarkets.length, 5);
+      const scanLimit = resolvedMarkets.length;
       for (let i = 0; i < scanLimit; i++) {
         const market = resolvedMarkets[i];
         try {
@@ -1527,6 +1527,11 @@ export function registerPrescienceRoutes(app) {
           // Weighted sum (max raw = 4+3+2+1 = 10), normalize to 0-100
           const rawConviction = normFlowImbalance * 4 + normLargePositionRatio * 3 + normFreshExcess * 2 + normVolLiq * 1;
           let threatScore = Math.round((rawConviction / 10) * 100);
+
+          // Volume/wallet floor: micro-volume or thin-wallet markets can't score above LOW
+          if (totalVolume < 5000 || totalWallets < 10) {
+            threatScore = Math.min(threatScore, 15);
+          }
 
           // Near-expiry consensus discount: markets about to resolve at >95% aren't suspicious
           let nearExpiryConsensus = false;
