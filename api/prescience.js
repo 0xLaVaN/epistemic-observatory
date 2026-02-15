@@ -1445,8 +1445,19 @@ export function registerPrescienceRoutes(app) {
   // NOTE: Must be before /:address to avoid being caught by param route
   app.get('/prescience/scan', async (req, res) => {
     try {
+      const slug = req.query.slug;
       const limit = Math.min(parseInt(req.query.limit) || 20, 30);
-      const activeMarkets = await getActiveMarkets(limit);
+      let activeMarkets;
+      if (slug) {
+        // Fetch specific market by slug
+        const market = await cached(`market_slug_${slug}`, MARKET_CACHE_TTL, async () => {
+          const results = await fetchJSON(`${GAMMA_API}/markets?slug=${encodeURIComponent(slug)}&limit=1`);
+          return results && results.length > 0 ? results[0] : null;
+        });
+        activeMarkets = market ? [market] : [];
+      } else {
+        activeMarkets = await getActiveMarkets(limit);
+      }
 
       const markets = [];
       for (const market of activeMarkets) {
