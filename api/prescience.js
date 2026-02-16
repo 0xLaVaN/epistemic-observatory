@@ -1024,15 +1024,21 @@ export function registerPrescienceRoutes(app) {
           }
 
           let marketSuspicious = 0;
+          let marketHighestScore = 0;
           for (const [, wTrades] of Object.entries(wallets)) {
             if (wTrades.length < 2) continue;
             const r = computePrescienceScore(wTrades, [market]);
             if (r.score >= 50) marketSuspicious++;
-            if (r.score > highestScore) highestScore = r.score;
+            if (r.score > marketHighestScore) marketHighestScore = r.score;
           }
 
           totalWallets += Object.keys(wallets).length;
           totalSuspicious += marketSuspicious;
+
+          // Only let non-closed markets influence highest_score / threat_level
+          if (!market.closedTime) {
+            if (marketHighestScore > highestScore) highestScore = marketHighestScore;
+          }
 
           if (marketSuspicious > 0) {
             hotMarkets.push({
@@ -1058,9 +1064,9 @@ export function registerPrescienceRoutes(app) {
           suspicious_ratio: totalWallets > 0 ? Math.round((totalSuspicious / totalWallets) * 10000) / 100 : 0,
           highest_score: highestScore,
           total_volume_usd: Math.round(totalVolume * 100) / 100,
-          threat_level: totalSuspicious >= 20 ? 'SEVERE' : totalSuspicious >= 10 ? 'ELEVATED' : totalSuspicious >= 3 ? 'GUARDED' : 'LOW',
+          threat_level: highestScore >= 75 ? 'SEVERE' : highestScore >= 50 ? 'ELEVATED' : highestScore >= 25 ? 'GUARDED' : 'LOW',
         },
-        hot_markets: hotMarkets.slice(0, 10),
+        hot_markets: hotMarkets.filter(m => !m.closedTime).slice(0, 10),
         active_markets: activeMarkets.slice(0, 5).map(m => ({
           question: m.question,
           conditionId: m.conditionId,
@@ -1545,6 +1551,18 @@ export function registerPrescienceRoutes(app) {
             }
           } catch {}
 
+          // Near-expiry consensus detection: days_to_expiry < 30 AND (price < 0.05 OR price > 0.95)
+          let nearExpiryConsensusDetected = false;
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
+            const minPrice = Math.min(...prices.map(p => parseFloat(p) || 1));
+            const daysToExpiry = market.endDate ? (new Date(market.endDate).getTime() - Date.now()) / 86400000 : Infinity;
+            if (daysToExpiry < 30 && (maxPrice > 0.95 || minPrice < 0.05)) {
+              nearExpiryConsensusDetected = true;
+            }
+          } catch {}
+
           const threatLevel = threatScore >= 70 ? 'CRITICAL'
             : threatScore >= 45 ? 'HIGH'
             : threatScore >= 25 ? 'MODERATE'
@@ -1575,6 +1593,7 @@ export function registerPrescienceRoutes(app) {
             threat_level: threatLevel,
             conviction_weights: { flow_imbalance: 4, large_position_ratio: 3, fresh_wallet_excess: 2, volume_vs_liquidity: 1 },
             near_expiry_consensus: nearExpiryConsensus,
+            near_expiry_consensus_detected: nearExpiryConsensusDetected,
           });
         } catch {}
       }
