@@ -1476,6 +1476,8 @@ export function registerPrescienceRoutes(app) {
           let freshWalletCount = 0;
           let buyVolume = 0, sellVolume = 0;
 
+          // Track per-outcome buy volumes for flow_direction_v2
+          const outcomeBuyVolume = {}; // outcome → USD volume
           for (const t of trades) {
             const w = (t.proxyWallet || '').toLowerCase();
             if (!w) continue;
@@ -1484,7 +1486,13 @@ export function registerPrescienceRoutes(app) {
             wallets[w].volume += size;
             wallets[w].trades++;
             if (t.timestamp < wallets[w].firstSeen) wallets[w].firstSeen = t.timestamp;
-            if (t.side === 'BUY') buyVolume += size; else sellVolume += size;
+            if (t.side === 'BUY') {
+              buyVolume += size;
+              const outcome = t.outcome || 'unknown';
+              outcomeBuyVolume[outcome] = (outcomeBuyVolume[outcome] || 0) + size;
+            } else {
+              sellVolume += size;
+            }
           }
 
           for (const [, data] of Object.entries(wallets)) {
@@ -1537,6 +1545,53 @@ export function registerPrescienceRoutes(app) {
           // Volume/wallet floor: micro-volume or thin-wallet markets can't score above LOW
           if (totalVolume < 5000 || totalWallets < 10) {
             threatScore = Math.min(threatScore, 15);
+          }
+
+          // Guard 1: flow_direction_v2 — distinguish Yes-BUY from No-BUY
+          // On consensus markets, virtually all BUY volume is on the consensus (majority) side.
+          // The minority-side flow is the unusual/suspicious signal.
+          let flowDirectionV2 = 'NEUTRAL';
+          let minoritySideFlow = 0;
+          let majoritySideFlow = 0;
+          let minorityOutcome = null;
+          let majorityOutcome = null;
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const outcomes = JSON.parse(market.outcomes || '[]');
+            if (outcomes.length === 2 && prices.length === 2) {
+              const p0 = parseFloat(prices[0]) || 0;
+              const p1 = parseFloat(prices[1]) || 0;
+              // Majority outcome = higher priced
+              const majIdx = p0 >= p1 ? 0 : 1;
+              const minIdx = 1 - majIdx;
+              majorityOutcome = outcomes[majIdx];
+              minorityOutcome = outcomes[minIdx];
+              majoritySideFlow = outcomeBuyVolume[majorityOutcome] || 0;
+              minoritySideFlow = outcomeBuyVolume[minorityOutcome] || 0;
+              const totalOutcomeFlow = majoritySideFlow + minoritySideFlow;
+              if (totalOutcomeFlow > 0) {
+                const minorityRatio = minoritySideFlow / totalOutcomeFlow;
+                flowDirectionV2 = minorityRatio > 0.3 ? 'MINORITY_HEAVY' : minorityRatio > 0.1 ? 'MIXED' : 'MAJORITY_ALIGNED';
+              }
+            }
+          } catch {}
+
+          // Guard 2: consensus_dampening — cap threat_score for extreme consensus markets
+          // If max price >= 0.98 (Yes<2% or No<2%), reduce by 60% unless fresh_wallet_excess > 0.20
+          let consensusDampened = false;
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
+            if (maxPrice >= 0.98 && excessFreshRatio <= 0.20) {
+              threatScore = Math.round(threatScore * 0.4); // 60% reduction
+              consensusDampened = true;
+            }
+          } catch {}
+
+          // Guard 3: large_position_floor — require large_positions > 0 for threat_score > 50
+          // Without any large positions ($1000+), cap threat_score at 50
+          if (largePositions === 0) {
+            threatScore = Math.min(threatScore, 50);
           }
 
           // Near-expiry consensus discount: markets about to resolve at >95% aren't suspicious
@@ -1594,6 +1649,12 @@ export function registerPrescienceRoutes(app) {
             conviction_weights: { flow_imbalance: 4, large_position_ratio: 3, fresh_wallet_excess: 2, volume_vs_liquidity: 1 },
             near_expiry_consensus: nearExpiryConsensus,
             near_expiry_consensus_detected: nearExpiryConsensusDetected,
+            flow_direction_v2: flowDirectionV2,
+            minority_side_flow_usd: Math.round(minoritySideFlow * 100) / 100,
+            majority_side_flow_usd: Math.round(majoritySideFlow * 100) / 100,
+            minority_outcome: minorityOutcome,
+            majority_outcome: majorityOutcome,
+            consensus_dampened: consensusDampened,
           });
         } catch {}
       }
