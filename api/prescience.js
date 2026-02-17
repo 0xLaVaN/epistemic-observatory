@@ -1900,7 +1900,9 @@ export function registerPrescienceRoutes(app) {
             consensus_dampened: consensusDampened,
             fresh_excess_capped: freshExcessCapped,
           });
-        } catch {}
+        } catch (marketErr) {
+          console.error(`Scan: market ${market?.question?.slice(0,40)} failed:`, marketErr?.message || marketErr);
+        }
       }
 
       markets.sort((a, b) => b.fresh_wallets - a.fresh_wallets);
