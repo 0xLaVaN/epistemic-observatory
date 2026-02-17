@@ -2,9 +2,12 @@
  * PRESCIENCE — Prediction Market Insider Tracking Engine
  * "See who sees first."
  * 
- * Uses Polymarket's public APIs to index trades, score wallets for
- * insider-like behavior, and surface suspicious activity.
+ * Uses Polymarket's public APIs + Kalshi via pmxt to index trades,
+ * score wallets for insider-like behavior, and surface suspicious activity.
+ * Cross-platform divergence detection: same market, different signals = stronger conviction.
  */
+
+import { Kalshi, Polymarket } from 'pmxtjs';
 
 // ============================================
 // CONFIG
@@ -12,6 +15,15 @@
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
 const DATA_API = 'https://data-api.polymarket.com';
+
+// Kalshi exchange instance (lazy-initialized)
+let kalshiExchange = null;
+function getKalshi() {
+  if (!kalshiExchange) kalshiExchange = new Kalshi();
+  return kalshiExchange;
+}
+
+const KALSHI_CACHE_TTL = 10 * 60 * 1000; // 10 min for Kalshi data
 
 // Cache TTLs (ms)
 const CACHE_TTL = 5 * 60 * 1000;  // 5 min for most queries
@@ -848,7 +860,7 @@ function getRateLimitEntry(store, key, maxRequests) {
 }
 
 // Free tier endpoints (no key required)
-const FREE_ENDPOINTS = new Set(['pulse', 'scan', 'news']);
+const FREE_ENDPOINTS = new Set(['pulse', 'scan', 'news', 'kalshi', 'cross-platform']);
 
 function prescienceAuth(req, res, next) {
   // Extract the sub-path after /prescience/
@@ -1738,11 +1750,35 @@ export function registerPrescienceRoutes(app) {
           const vol24 = parseFloat(market.volume24hr) || totalVolume;
           const volumeVsLiquidityRatio = liq > 0 ? Math.min(vol24 / liq, 5) / 5 : 0; // normalize to 0-1, cap at 5x
 
+          // Guard 1: flow_direction_v2 — MUST be computed before conviction scoring
+          // MOVED ABOVE to avoid temporal dead zone ReferenceError (PM-006 fix)
+          let flowDirectionV2 = 'NEUTRAL';
+          let minoritySideFlow = 0;
+          let majoritySideFlow = 0;
+          let minorityOutcome = null;
+          let majorityOutcome = null;
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const outcomes = JSON.parse(market.outcomes || '[]');
+            if (outcomes.length === 2 && prices.length === 2) {
+              const p0 = parseFloat(prices[0]) || 0;
+              const p1 = parseFloat(prices[1]) || 0;
+              const majIdx = p0 >= p1 ? 0 : 1;
+              const minIdx = 1 - majIdx;
+              majorityOutcome = outcomes[majIdx];
+              minorityOutcome = outcomes[minIdx];
+              majoritySideFlow = outcomeBuyVolume[majorityOutcome] || 0;
+              minoritySideFlow = outcomeBuyVolume[minorityOutcome] || 0;
+              const totalOutcomeFlow = majoritySideFlow + minoritySideFlow;
+              if (totalOutcomeFlow > 0) {
+                const minorityRatio = minoritySideFlow / totalOutcomeFlow;
+                flowDirectionV2 = minorityRatio > 0.3 ? 'MINORITY_HEAVY' : minorityRatio > 0.1 ? 'MIXED' : 'MAJORITY_ALIGNED';
+              }
+            }
+          } catch {}
+
           // Each component normalized to 0-1
-          // flow_direction_v2-aware scoring: replace old flow_imbalance with v2 logic
-          // MAJORITY_ALIGNED flow = consensus buying, not signal (0-1 pts)
-          // MINORITY_HEAVY flow = contra-consensus, real signal (4-5 pts)
-          // MIXED = partial signal based on minority ratio (2-3 pts)
+          // flow_direction_v2-aware scoring
           let flowV2Score;
           if (flowDirectionV2 === 'MINORITY_HEAVY') {
             // Strong contra-consensus flow — highest signal value
@@ -1772,35 +1808,6 @@ export function registerPrescienceRoutes(app) {
           if (totalVolume < 5000 || totalWallets < 10) {
             threatScore = Math.min(threatScore, 15);
           }
-
-          // Guard 1: flow_direction_v2 — distinguish Yes-BUY from No-BUY
-          // On consensus markets, virtually all BUY volume is on the consensus (majority) side.
-          // The minority-side flow is the unusual/suspicious signal.
-          let flowDirectionV2 = 'NEUTRAL';
-          let minoritySideFlow = 0;
-          let majoritySideFlow = 0;
-          let minorityOutcome = null;
-          let majorityOutcome = null;
-          try {
-            const prices = JSON.parse(market.outcomePrices || '[]');
-            const outcomes = JSON.parse(market.outcomes || '[]');
-            if (outcomes.length === 2 && prices.length === 2) {
-              const p0 = parseFloat(prices[0]) || 0;
-              const p1 = parseFloat(prices[1]) || 0;
-              // Majority outcome = higher priced
-              const majIdx = p0 >= p1 ? 0 : 1;
-              const minIdx = 1 - majIdx;
-              majorityOutcome = outcomes[majIdx];
-              minorityOutcome = outcomes[minIdx];
-              majoritySideFlow = outcomeBuyVolume[majorityOutcome] || 0;
-              minoritySideFlow = outcomeBuyVolume[minorityOutcome] || 0;
-              const totalOutcomeFlow = majoritySideFlow + minoritySideFlow;
-              if (totalOutcomeFlow > 0) {
-                const minorityRatio = minoritySideFlow / totalOutcomeFlow;
-                flowDirectionV2 = minorityRatio > 0.3 ? 'MINORITY_HEAVY' : minorityRatio > 0.1 ? 'MIXED' : 'MAJORITY_ALIGNED';
-              }
-            }
-          } catch {}
 
           // Guard 2: consensus_dampening — cap threat_score for extreme consensus markets
           // If max price >= 0.98 (Yes<2% or No<2%), reduce by 60% unless fresh_wallet_excess > 0.20
@@ -1859,6 +1866,7 @@ export function registerPrescienceRoutes(app) {
             : 'LOW';
 
           markets.push({
+            exchange: 'polymarket',
             question: market.question,
             conditionId: market.conditionId,
             slug: market.slug,
@@ -1909,6 +1917,138 @@ export function registerPrescienceRoutes(app) {
     } catch (err) {
       console.error('Scan error:', err);
       res.status(500).json({ error: 'Market scan failed', detail: err.message });
+    }
+  });
+
+  // --- GET /prescience/kalshi --- (MOVED before :address catch-all)
+  app.get('/prescience/kalshi', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit) || 15, 30);
+      const kalshi = getKalshi();
+      const markets = await cached('kalshi_markets', KALSHI_CACHE_TTL, () => kalshi.fetchMarkets({ limit }));
+      
+      const results = [];
+      for (const market of markets) {
+        try {
+          const trades = await cached(`kalshi_trades_${market.marketId}`, CACHE_TTL, () => kalshi.fetchTrades(market.marketId, { limit: 200 }));
+          if (!trades || trades.length < 3) continue;
+
+          let buyVol = 0, sellVol = 0;
+          const now = Date.now();
+          const oneDayAgo = now - 86400000;
+          let recentBuyVol = 0, recentSellVol = 0;
+
+          for (const t of trades) {
+            const size = (t.amount || 0) * (t.price || 0);
+            if (t.side === 'buy' || t.side === 'BUY') {
+              buyVol += size;
+              if (t.timestamp >= oneDayAgo) recentBuyVol += size;
+            } else {
+              sellVol += size;
+              if (t.timestamp >= oneDayAgo) recentSellVol += size;
+            }
+          }
+
+          const totalFlow = recentBuyVol + recentSellVol;
+          const flowImbalance = totalFlow > 0 ? (recentBuyVol - recentSellVol) / totalFlow : 0;
+          const yesPrice = market.outcomes?.[0]?.price || 0;
+          const noPrice = market.outcomes?.[1]?.price || 0;
+
+          results.push({
+            exchange: 'kalshi', marketId: market.marketId, question: market.title, url: market.url,
+            category: market.category, currentPrices: { Yes: yesPrice, No: noPrice },
+            volume24h: market.volume24h || 0, liquidity: market.liquidity || 0, endDate: market.resolutionDate,
+            total_trades: trades.length,
+            flow_direction: flowImbalance > 0.1 ? 'BUY' : flowImbalance < -0.1 ? 'SELL' : 'NEUTRAL',
+            flow_imbalance: Math.round(Math.abs(flowImbalance) * 100) / 100,
+            buy_volume_usd: Math.round(buyVol * 100) / 100, sell_volume_usd: Math.round(sellVol * 100) / 100,
+          });
+        } catch {}
+      }
+
+      results.sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+      res.json({ kalshi: results, meta: { markets_scanned: results.length, timestamp: new Date().toISOString(), engine: 'Prescience Kalshi v1.0' } });
+    } catch (err) {
+      console.error('Kalshi scan error:', err);
+      res.status(500).json({ error: 'Kalshi scan failed', detail: err.message });
+    }
+  });
+
+  // --- GET /prescience/cross-platform --- (MOVED before :address catch-all)
+  app.get('/prescience/cross-platform', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit) || 15, 30);
+      const minDivergence = parseFloat(req.query.min_divergence) || 0.05;
+      const kalshi = getKalshi();
+      const [polyMarkets, kalshiMarkets] = await Promise.all([
+        cached('cross_poly_markets', MARKET_CACHE_TTL, () => getActiveMarkets(30)),
+        cached('cross_kalshi_markets', KALSHI_CACHE_TTL, () => kalshi.fetchMarkets({ limit: 50 })),
+      ]);
+
+      function extractKeywords(text) {
+        if (!text) return [];
+        return text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)
+          .filter(w => w.length > 3 && !['will','the','before','after','than','this','that','with','from','have','been','does','what','when','where','which'].includes(w));
+      }
+      function similarity(kw1, kw2) {
+        if (!kw1.length || !kw2.length) return 0;
+        const set2 = new Set(kw2);
+        return kw1.filter(w => set2.has(w)).length / Math.max(kw1.length, kw2.length);
+      }
+
+      const kalshiIndex = kalshiMarkets.map(m => ({ market: m, keywords: extractKeywords(m.title) }));
+      const crossPlatform = [];
+
+      for (const polyMarket of polyMarkets) {
+        const polyKw = extractKeywords(polyMarket.question);
+        let bestMatch = null, bestScore = 0;
+        for (const ki of kalshiIndex) {
+          const score = similarity(polyKw, ki.keywords);
+          if (score > bestScore && score >= 0.3) { bestScore = score; bestMatch = ki.market; }
+        }
+        if (!bestMatch) continue;
+
+        let polyYes = 0;
+        try { const prices = JSON.parse(polyMarket.outcomePrices || '[]'); polyYes = parseFloat(prices[0]) || 0; } catch {}
+        const kalshiYes = bestMatch.outcomes?.[0]?.price || 0;
+        const priceDivergence = Math.abs(polyYes - kalshiYes);
+        if (priceDivergence < minDivergence) continue;
+
+        let polyFlow = 'NEUTRAL', kalshiFlow = 'NEUTRAL';
+        try {
+          const polyTrades = await getMarketTrades(polyMarket.conditionId, 200);
+          let pBuy = 0, pSell = 0;
+          for (const t of polyTrades || []) { const s = (t.size||0)*(t.price||0); if (t.side==='BUY') pBuy+=s; else pSell+=s; }
+          const pImb = (pBuy+pSell) > 0 ? (pBuy-pSell)/(pBuy+pSell) : 0;
+          polyFlow = pImb > 0.1 ? 'BUY' : pImb < -0.1 ? 'SELL' : 'NEUTRAL';
+        } catch {}
+        try {
+          const kTrades = await cached(`kalshi_trades_${bestMatch.marketId}`, CACHE_TTL, () => kalshi.fetchTrades(bestMatch.marketId, { limit: 200 }));
+          let kBuy = 0, kSell = 0;
+          for (const t of kTrades || []) { const s = (t.amount||0)*(t.price||0); if (t.side==='buy'||t.side==='BUY') kBuy+=s; else kSell+=s; }
+          const kImb = (kBuy+kSell) > 0 ? (kBuy-kSell)/(kBuy+kSell) : 0;
+          kalshiFlow = kImb > 0.1 ? 'BUY' : kImb < -0.1 ? 'SELL' : 'NEUTRAL';
+        } catch {}
+
+        const flowDiverges = polyFlow !== kalshiFlow && polyFlow !== 'NEUTRAL' && kalshiFlow !== 'NEUTRAL';
+        const signalStrength = Math.round(Math.min(100, (priceDivergence * 200) + (flowDiverges ? 40 : 0) + (bestScore * 20)));
+
+        crossPlatform.push({
+          polymarket: { question: polyMarket.question, slug: polyMarket.slug, yes_price: polyYes, volume24h: polyMarket.volume24hr, flow_direction: polyFlow },
+          kalshi: { question: bestMatch.title, marketId: bestMatch.marketId, url: bestMatch.url, yes_price: kalshiYes, volume24h: bestMatch.volume24h, flow_direction: kalshiFlow },
+          divergence: { price_gap: Math.round(priceDivergence*10000)/100, price_gap_raw: Math.round(priceDivergence*100)/100, flow_diverges: flowDiverges, match_quality: Math.round(bestScore*100)/100, signal_strength: signalStrength, signal_level: signalStrength >= 60 ? 'STRONG' : signalStrength >= 30 ? 'MODERATE' : 'WEAK' },
+          arbitrage_hint: priceDivergence >= 0.05 ? (polyYes > kalshiYes ? 'Buy YES on Kalshi, hedge on Polymarket' : 'Buy YES on Polymarket, hedge on Kalshi') : null,
+        });
+      }
+
+      crossPlatform.sort((a, b) => b.divergence.signal_strength - a.divergence.signal_strength);
+      res.json({
+        cross_platform: crossPlatform.slice(0, limit),
+        meta: { polymarket_scanned: polyMarkets.length, kalshi_scanned: kalshiMarkets.length, matches_found: crossPlatform.length, min_divergence: minDivergence, timestamp: new Date().toISOString(), engine: 'Prescience Cross-Platform v1.0', description: 'Finds the same markets on Polymarket and Kalshi, detects price/flow divergences.' },
+      });
+    } catch (err) {
+      console.error('Cross-platform error:', err);
+      res.status(500).json({ error: 'Cross-platform analysis failed', detail: err.message });
     }
   });
 
@@ -2320,6 +2460,8 @@ export function registerPrescienceRoutes(app) {
         'GET /prescience/watchlist — Top 500 smart wallets by win rate (?limit=500). 6hr cache.',
         'GET /prescience/clusters — Temporal cluster detection: smart wallets converging on same position (?min_wallets=3&min_conviction=60&hours=24&window_hours=2)',
         'GET /prescience/news — Auto-generated news feed from market movements + insider signals. 5min cache.',
+        'GET /prescience/kalshi — Kalshi market scan with trade flow analysis (?limit=15)',
+        'GET /prescience/cross-platform — Cross-platform divergence detector: Polymarket vs Kalshi (?limit=15&min_divergence=0.05)',
       ],
       scoring: {
         range: '0-100',
@@ -2341,7 +2483,7 @@ export function registerPrescienceRoutes(app) {
         'Topic/domain edge detection — consistent wins in one domain = real edge',
         'Liquidity-relative sizing — bet size scored relative to market liquidity, not absolute USD',
       ],
-      data_source: 'Polymarket (Gamma API + Data API)',
+      data_source: 'Polymarket (Gamma API + Data API) + Kalshi (via pmxt)',
       auth: {
         free_tier: 'No API key needed for /prescience/pulse and /prescience/scan. Rate limited to 10 req/min per IP.',
         pro_tier: 'Set x-api-key header. All endpoints, 100 req/min. Get a key at https://epistemic-observatory-ui.vercel.app/prescience',
