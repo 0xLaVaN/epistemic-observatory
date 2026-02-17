@@ -829,10 +829,110 @@ async function detectClusters(options = {}) {
 }
 
 // ============================================
+// API KEY AUTH + RATE LIMITING
+// ============================================
+
+// In-memory rate limit stores (reset on cold start, fine for serverless)
+const rateLimitFree = new Map();  // ip → { count, resetAt }
+const rateLimitPro = new Map();   // apiKey → { count, resetAt }
+
+function getRateLimitEntry(store, key, maxRequests) {
+  const now = Date.now();
+  let entry = store.get(key);
+  if (!entry || now >= entry.resetAt) {
+    entry = { count: 0, resetAt: now + 60000 }; // 1 minute window
+    store.set(key, entry);
+  }
+  entry.count++;
+  return { allowed: entry.count <= maxRequests, remaining: Math.max(0, maxRequests - entry.count), resetAt: entry.resetAt };
+}
+
+// Free tier endpoints (no key required)
+const FREE_ENDPOINTS = new Set(['pulse', 'scan', 'news']);
+
+function prescienceAuth(req, res, next) {
+  // Extract the sub-path after /prescience/
+  const fullPath = req.path; // e.g. /prescience/pulse or /prescience/leaderboard
+  const parts = fullPath.replace(/^\/prescience\/?/, '').split('/');
+  const subEndpoint = parts[0] || '';
+
+  // Check for API key
+  const apiKey = req.headers['x-api-key'];
+  const validKeys = (process.env.PRESCIENCE_API_KEYS || '').split(',').filter(Boolean);
+  const isValidKey = apiKey && validKeys.includes(apiKey);
+
+  if (isValidKey) {
+    // Pro tier: 100 req/min per key
+    const rl = getRateLimitEntry(rateLimitPro, apiKey, 100);
+    res.setHeader('X-RateLimit-Limit', '100');
+    res.setHeader('X-RateLimit-Remaining', String(rl.remaining));
+    if (!rl.allowed) {
+      return res.status(429).json({ error: 'Rate limit exceeded' });
+    }
+    req.prescienceTier = 'pro';
+    return next();
+  }
+
+  // No valid key — check if endpoint is free tier
+  // Also allow: root /prescience, /prescience/interest, /prescience/interest/count, /prescience/register
+  const isFreeEndpoint = FREE_ENDPOINTS.has(subEndpoint) || subEndpoint === '' || subEndpoint === 'interest' || subEndpoint === 'register';
+
+  if (!isFreeEndpoint) {
+    return res.status(401).json({
+      error: 'API key required. Get access at https://epistemic-observatory-ui.vercel.app/prescience'
+    });
+  }
+
+  // Free tier: 10 req/min per IP
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || 'unknown';
+  const rl = getRateLimitEntry(rateLimitFree, ip, 10);
+  res.setHeader('X-RateLimit-Limit', '10');
+  res.setHeader('X-RateLimit-Remaining', String(rl.remaining));
+  if (!rl.allowed) {
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+  req.prescienceTier = 'free';
+  next();
+}
+
+// Periodic cleanup of expired rate limit entries (every 5 min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of rateLimitFree) { if (now >= v.resetAt) rateLimitFree.delete(k); }
+  for (const [k, v] of rateLimitPro) { if (now >= v.resetAt) rateLimitPro.delete(k); }
+}, 300000);
+
+// ============================================
 // API ROUTES
 // ============================================
 
 export function registerPrescienceRoutes(app) {
+
+  // Apply auth middleware to all /prescience routes
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/prescience')) {
+      return prescienceAuth(req, res, next);
+    }
+    next();
+  });
+
+  // --- POST /prescience/register --- (email capture → generates interest)
+  app.post('/prescience/register', (req, res) => {
+    const { email } = req.body || {};
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'Valid email required' });
+    }
+    // Delegate to interest list
+    const interestList = req.app._prescienceInterestList || [];
+    interestList.push({ email, source: 'register', timestamp: new Date().toISOString() });
+    req.app._prescienceInterestList = interestList;
+    console.log(`[PRESCIENCE REGISTER] ${email} at ${new Date().toISOString()}`);
+    res.json({
+      ok: true,
+      message: 'Registered! We\'ll send your API key to ' + email + ' shortly.',
+      next_steps: 'Check your email for your API key. Set x-api-key header to access all endpoints.',
+    });
+  });
 
   // IMPORTANT: Register specific routes BEFORE the parameterized :address route
 
@@ -1055,18 +1155,127 @@ export function registerPrescienceRoutes(app) {
 
       hotMarkets.sort((a, b) => b.suspicious_wallets - a.suspicious_wallets);
 
+      // Also check active markets for threat scores (aligned with /prescience/scan v2 pipeline)
+      let activeHighestScore = 0;
+      let activeHotMarkets = [];
+      for (const market of activeMarkets) {
+        try {
+          const trades = await getMarketTrades(market.conditionId, 200);
+          if (trades.length < 5) continue;
+          const wallets = {};
+          let buyVol = 0, sellVol = 0;
+          const pOutcomeBuyVol = {}; // outcome → USD
+          for (const t of trades) {
+            const w = t.proxyWallet?.toLowerCase();
+            if (!w) continue;
+            if (!wallets[w]) wallets[w] = { volume: 0, trades: 0, firstSeen: t.timestamp };
+            wallets[w].volume += t.size * t.price;
+            wallets[w].trades++;
+            if (t.side === 'BUY') {
+              buyVol += t.size * t.price;
+              const outcome = t.outcome || 'unknown';
+              pOutcomeBuyVol[outcome] = (pOutcomeBuyVol[outcome] || 0) + t.size * t.price;
+            } else {
+              sellVol += t.size * t.price;
+            }
+          }
+          const totalW = Object.keys(wallets).length;
+          if (totalW < 3) continue;
+          const now_p = Date.now() / 1000;
+          const freshCount = Object.values(wallets).filter(w => {
+            const ageDays = (now_p - w.firstSeen) / 86400;
+            return ageDays < 7 && w.volume > 50;
+          }).length;
+          const freshRatio = freshCount / totalW;
+          const isCapped = trades.length >= 195;
+          const BASELINE = isCapped ? 0.60 : 0.30;
+          const excessFresh = Math.max(0, freshRatio - BASELINE);
+          const absImb = Math.abs(buyVol - sellVol) / ((buyVol + sellVol) || 1);
+          const largePos = Object.values(wallets).filter(w => w.volume >= 1000).length;
+          const largePosRatio = Math.min(largePos / totalW, 1);
+          const normFreshExcess = Math.min(excessFresh / 0.4, 1);
+          const liq = parseFloat(market.liquidityNum) || 1;
+          const vol24 = parseFloat(market.volume24hr) || 0;
+          const volLiq = Math.min(vol24 / liq, 5) / 5;
+
+          // flow_direction_v2 for pulse
+          let pFlowV2 = 'NEUTRAL', pMinFlow = 0, pMajFlow = 0;
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const outcomes = JSON.parse(market.outcomes || '[]');
+            if (outcomes.length === 2 && prices.length === 2) {
+              const p0 = parseFloat(prices[0]) || 0;
+              const p1 = parseFloat(prices[1]) || 0;
+              const majIdx = p0 >= p1 ? 0 : 1;
+              const minIdx = 1 - majIdx;
+              pMajFlow = pOutcomeBuyVol[outcomes[majIdx]] || 0;
+              pMinFlow = pOutcomeBuyVol[outcomes[minIdx]] || 0;
+              const totalOF = pMajFlow + pMinFlow;
+              if (totalOF > 0) {
+                const minRatio = pMinFlow / totalOF;
+                pFlowV2 = minRatio > 0.3 ? 'MINORITY_HEAVY' : minRatio > 0.1 ? 'MIXED' : 'MAJORITY_ALIGNED';
+              }
+            }
+          } catch {}
+
+          let flowV2Sc;
+          if (pFlowV2 === 'MINORITY_HEAVY') {
+            const minR = (pMinFlow + pMajFlow) > 0 ? pMinFlow / (pMinFlow + pMajFlow) : 0;
+            flowV2Sc = 4 + Math.min(1, minR);
+          } else if (pFlowV2 === 'MIXED') {
+            const minR = (pMinFlow + pMajFlow) > 0 ? pMinFlow / (pMinFlow + pMajFlow) : 0;
+            flowV2Sc = 2 + Math.min(1, minR * 3);
+          } else {
+            flowV2Sc = absImb * 1;
+          }
+          const normFlowV2p = flowV2Sc / 5;
+          const volLiqW = pFlowV2 === 'MAJORITY_ALIGNED' ? 0.5 : 1.0;
+
+          const raw = normFlowV2p * 5 + largePosRatio * 3 + normFreshExcess * 2 + volLiq * volLiqW;
+          let score = Math.round((raw / 11) * 100);
+
+          // Apply same guards as scan
+          if (excessFresh <= 0) score = Math.min(score, 6);
+          if (largePos === 0) score = Math.min(score, 50);
+          // Volume/wallet floor
+          const totalVol = buyVol + sellVol;
+          if (totalVol < 5000 || totalW < 10) score = Math.min(score, 15);
+          // Consensus dampening
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
+            if (maxPrice >= 0.98 && excessFresh <= 0.20) score = Math.round(score * 0.4);
+          } catch {}
+          // Near-expiry consensus
+          try {
+            const prices = JSON.parse(market.outcomePrices || '[]');
+            const maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
+            const hrsToExp = market.endDate ? (new Date(market.endDate).getTime() - Date.now()) / 3600000 : Infinity;
+            if (hrsToExp < 48 && maxPrice >= 0.95) score = Math.round(score * 0.3);
+          } catch {}
+
+          if (score > activeHighestScore) activeHighestScore = score;
+          if (score >= 25) {
+            activeHotMarkets.push({ question: market.question, conditionId: market.conditionId, slug: market.slug, threat_score: score, flow_direction_v2: pFlowV2 });
+          }
+        } catch {}
+      }
+
+      // Merge: pulse highest_score should reflect both resolved and active markets
+      const combinedHighestScore = Math.max(highestScore, activeHighestScore);
+
       res.json({
         pulse: {
           timestamp: new Date().toISOString(),
-          markets_scanned: scanLimit,
+          markets_scanned: scanLimit + activeMarkets.length,
           total_wallets: totalWallets,
           suspicious_wallets: totalSuspicious,
           suspicious_ratio: totalWallets > 0 ? Math.round((totalSuspicious / totalWallets) * 10000) / 100 : 0,
-          highest_score: highestScore,
+          highest_score: combinedHighestScore,
           total_volume_usd: Math.round(totalVolume * 100) / 100,
-          threat_level: highestScore >= 75 ? 'SEVERE' : highestScore >= 50 ? 'ELEVATED' : highestScore >= 25 ? 'GUARDED' : 'LOW',
+          threat_level: combinedHighestScore >= 75 ? 'SEVERE' : combinedHighestScore >= 50 ? 'ELEVATED' : combinedHighestScore >= 25 ? 'GUARDED' : 'LOW',
         },
-        hot_markets: hotMarkets.filter(m => !m.closedTime).slice(0, 10),
+        hot_markets: [...hotMarkets.filter(m => !m.closedTime), ...activeHotMarkets].sort((a, b) => (b.threat_score || b.suspicious_wallets || 0) - (a.threat_score || a.suspicious_wallets || 0)).slice(0, 10),
         active_markets: activeMarkets.slice(0, 5).map(m => ({
           question: m.question,
           conditionId: m.conditionId,
@@ -1530,17 +1739,34 @@ export function registerPrescienceRoutes(app) {
           const volumeVsLiquidityRatio = liq > 0 ? Math.min(vol24 / liq, 5) / 5 : 0; // normalize to 0-1, cap at 5x
 
           // Each component normalized to 0-1
-          const normFlowImbalance = absImbalance; // already 0-1
+          // flow_direction_v2-aware scoring: replace old flow_imbalance with v2 logic
+          // MAJORITY_ALIGNED flow = consensus buying, not signal (0-1 pts)
+          // MINORITY_HEAVY flow = contra-consensus, real signal (4-5 pts)
+          // MIXED = partial signal based on minority ratio (2-3 pts)
+          let flowV2Score;
+          if (flowDirectionV2 === 'MINORITY_HEAVY') {
+            // Strong contra-consensus flow — highest signal value
+            const minorityRatio = (minoritySideFlow + majoritySideFlow) > 0 ? minoritySideFlow / (minoritySideFlow + majoritySideFlow) : 0;
+            flowV2Score = 4 + Math.min(1, minorityRatio); // 4-5 points
+          } else if (flowDirectionV2 === 'MIXED') {
+            // Some minority flow — moderate signal
+            const minorityRatio = (minoritySideFlow + majoritySideFlow) > 0 ? minoritySideFlow / (minoritySideFlow + majoritySideFlow) : 0;
+            flowV2Score = 2 + Math.min(1, minorityRatio * 3); // 2-3 points
+          } else {
+            // MAJORITY_ALIGNED or NEUTRAL — consensus buying, minimal signal
+            flowV2Score = absImbalance * 1; // 0-1 points max
+          }
+          const normFlowV2 = flowV2Score / 5; // normalize to 0-1 (max is 5)
+
           const normLargePositionRatio = Math.min(largePositionRatio, 1); // 0-1
           const normFreshExcess = Math.min(excessFreshRatio / 0.4, 1); // 0-1, 40%+ excess = max
-          // Cap volume_vs_liquidity at 0.5x weight when flow_imbalance is low (<0.3)
-          // Prevents high-volume but directionless markets from inflating threat scores
-          const volLiqWeightMultiplier = absImbalance < 0.3 ? 0.5 : 1.0;
+          // Cap volume_vs_liquidity at 0.5x weight when no minority flow
+          const volLiqWeightMultiplier = flowDirectionV2 === 'MAJORITY_ALIGNED' ? 0.5 : 1.0;
           const normVolLiq = volumeVsLiquidityRatio * volLiqWeightMultiplier; // already 0-1, dampened when no directional signal
 
-          // Weighted sum (max raw = 4+3+2+1 = 10), normalize to 0-100
-          const rawConviction = normFlowImbalance * 4 + normLargePositionRatio * 3 + normFreshExcess * 2 + normVolLiq * 1;
-          let threatScore = Math.round((rawConviction / 10) * 100);
+          // Weighted sum (max raw = 5+3+2+1 = 11), normalize to 0-100
+          const rawConviction = normFlowV2 * 5 + normLargePositionRatio * 3 + normFreshExcess * 2 + normVolLiq * 1;
+          let threatScore = Math.round((rawConviction / 11) * 100);
 
           // Volume/wallet floor: micro-volume or thin-wallet markets can't score above LOW
           if (totalVolume < 5000 || totalWallets < 10) {
@@ -1592,6 +1818,15 @@ export function registerPrescienceRoutes(app) {
           // Without any large positions ($1000+), cap threat_score at 50
           if (largePositions === 0) {
             threatScore = Math.min(threatScore, 50);
+          }
+
+          // Guard 4: fresh_wallet_excess_floor — fresh_wallet_excess is the actual insider signal
+          // When excess=0, raw fresh_wallet_count is just retail noise on popular markets
+          // Cap threat_score at 6 (LOW) when no excess fresh wallets detected
+          let freshExcessCapped = false;
+          if (excessFreshRatio <= 0) {
+            threatScore = Math.min(threatScore, 6);
+            freshExcessCapped = true;
           }
 
           // Near-expiry consensus discount: markets about to resolve at >95% aren't suspicious
@@ -1646,7 +1881,7 @@ export function registerPrescienceRoutes(app) {
             volume_vs_liquidity: Math.round(volumeVsLiquidityRatio * 100) / 100,
             threat_score: threatScore,
             threat_level: threatLevel,
-            conviction_weights: { flow_imbalance: 4, large_position_ratio: 3, fresh_wallet_excess: 2, volume_vs_liquidity: 1 },
+            conviction_weights: { flow_direction_v2: 5, large_position_ratio: 3, fresh_wallet_excess: 2, volume_vs_liquidity: 1, note: 'MINORITY_HEAVY=4-5pts, MIXED=2-3pts, MAJORITY_ALIGNED=0-1pts' },
             near_expiry_consensus: nearExpiryConsensus,
             near_expiry_consensus_detected: nearExpiryConsensusDetected,
             flow_direction_v2: flowDirectionV2,
@@ -1655,6 +1890,7 @@ export function registerPrescienceRoutes(app) {
             minority_outcome: minorityOutcome,
             majority_outcome: majorityOutcome,
             consensus_dampened: consensusDampened,
+            fresh_excess_capped: freshExcessCapped,
           });
         } catch {}
       }
@@ -2106,6 +2342,11 @@ export function registerPrescienceRoutes(app) {
         'Liquidity-relative sizing — bet size scored relative to market liquidity, not absolute USD',
       ],
       data_source: 'Polymarket (Gamma API + Data API)',
+      auth: {
+        free_tier: 'No API key needed for /prescience/pulse and /prescience/scan. Rate limited to 10 req/min per IP.',
+        pro_tier: 'Set x-api-key header. All endpoints, 100 req/min. Get a key at https://epistemic-observatory-ui.vercel.app/prescience',
+        register: 'POST /prescience/register with { "email": "you@example.com" } to request access.',
+      },
     });
   });
 
