@@ -1795,7 +1795,16 @@ export function registerPrescienceRoutes(app) {
           const normFlowV2 = flowV2Score / 5; // normalize to 0-1 (max is 5)
 
           const normLargePositionRatio = Math.min(largePositionRatio, 1); // 0-1
-          const normFreshExcess = Math.min(excessFreshRatio / 0.4, 1); // 0-1, 40%+ excess = max
+          
+          // CRITICAL FIX: Dampen fresh_wallet_excess based on flow_direction_v2 BEFORE it enters threat_score
+          // When flow is MAJORITY_ALIGNED, fresh wallets are likely retail consensus buying, not insider signal
+          const effectiveFreshExcess = excessFreshRatio * (
+            flowDirectionV2 === 'MAJORITY_ALIGNED' ? 0.2 : 
+            flowDirectionV2 === 'MIXED' ? 0.6 : 
+            1.0
+          );
+          const normFreshExcess = Math.min(effectiveFreshExcess / 0.4, 1); // 0-1, 40%+ excess = max
+          
           // Cap volume_vs_liquidity at 0.5x weight when no minority flow
           const volLiqWeightMultiplier = flowDirectionV2 === 'MAJORITY_ALIGNED' ? 0.5 : 1.0;
           const normVolLiq = volumeVsLiquidityRatio * volLiqWeightMultiplier; // already 0-1, dampened when no directional signal
@@ -1815,7 +1824,7 @@ export function registerPrescienceRoutes(app) {
           try {
             const prices = JSON.parse(market.outcomePrices || '[]');
             const maxPrice = Math.max(...prices.map(p => parseFloat(p) || 0));
-            if (maxPrice >= 0.98 && excessFreshRatio <= 0.20) {
+            if (maxPrice >= 0.98 && effectiveFreshExcess <= 0.20) {
               threatScore = Math.round(threatScore * 0.4); // 60% reduction
               consensusDampened = true;
             }
@@ -1829,9 +1838,9 @@ export function registerPrescienceRoutes(app) {
 
           // Guard 4: fresh_wallet_excess_floor — fresh_wallet_excess is the actual insider signal
           // When excess=0, raw fresh_wallet_count is just retail noise on popular markets
-          // Cap threat_score at 6 (LOW) when no excess fresh wallets detected
+          // Cap threat_score at 6 (LOW) when no excess fresh wallets detected (using effective excess after dampening)
           let freshExcessCapped = false;
-          if (excessFreshRatio <= 0) {
+          if (effectiveFreshExcess <= 0) {
             threatScore = Math.min(threatScore, 6);
             freshExcessCapped = true;
           }
@@ -1860,6 +1869,16 @@ export function registerPrescienceRoutes(app) {
             }
           } catch {}
 
+          // Guard 6: consensus_dampened HARD CAP — consensus markets must not score high
+          // Even after soft reduction, enforce absolute ceiling based on fresh_wallet_excess
+          if (consensusDampened) {
+            if (effectiveFreshExcess < 0.10) {
+              threatScore = Math.min(threatScore, 5);
+            } else {
+              threatScore = Math.min(threatScore, 10);
+            }
+          }
+
           const threatLevel = threatScore >= 70 ? 'CRITICAL'
             : threatScore >= 45 ? 'HIGH'
             : threatScore >= 25 ? 'MODERATE'
@@ -1878,6 +1897,7 @@ export function registerPrescienceRoutes(app) {
             fresh_wallets: freshWalletCount,
             fresh_wallet_ratio: Math.round(freshWalletRatio * 100) / 100,
             fresh_wallet_excess: Math.round(excessFreshRatio * 100) / 100,
+            fresh_wallet_excess_effective: Math.round(effectiveFreshExcess * 100) / 100,
             sample_capped: isSampleCapped,
             total_wallets: totalWallets,
             total_trades: trades.length,
