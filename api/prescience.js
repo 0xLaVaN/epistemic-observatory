@@ -8,7 +8,7 @@
  */
 
 import { Polymarket } from 'pmxtjs';
-import { KalshiFixed, normalizeKalshiMarket } from '../kalshi-fix.js';
+import { KalshiFixed, normalizeKalshiMarket } from './kalshi-fix.js';
 
 // ============================================
 // CONFIG
