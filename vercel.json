@@ -12,7 +12,7 @@
   ],
   "routes": [
     {
-      "src": "/prescience/(pulse|scan|news|register|alerts|interest)(/.*)?",
+      "src": "/prescience/(.*)",
       "dest": "api/index.js"
     },
     {
