@@ -1,8 +1,11 @@
 import './globals.css'
 
 export const metadata = {
-  title: 'Epistemic Observatory | Agent Calibration Theatre',
-  description: 'The first verifiable epistemic primitive for AI agents. Track calibration, verify identity, build trust.',
+  title: 'Prescience | Prediction Market Intelligence',
+  description: 'The money speaks before the news. 533+ markets scanned. Whale detection. Real-time intelligence.',
+  icons: {
+    icon: '/icon.svg',
+  },
 }
 
 export default function RootLayout({ children }) {
